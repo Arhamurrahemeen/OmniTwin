@@ -47,8 +47,9 @@ export default function App() {
         port,
         onData: (obj) => {
           if (obj && typeof obj.ts === 'number') {
-            const vib = Math.abs(Math.hypot(obj.ax || 0, obj.ay || 0, obj.az || 0) - 1)
-            const clean = { temp: obj.temp, hum: obj.hum, vib, ax: obj.ax, ay: obj.ay, az: obj.az }
+            const hasAccel = typeof obj.ax === 'number'
+            const vib = hasAccel ? Math.abs(Math.hypot(obj.ax, obj.ay, obj.az) - 1) : null
+            const clean = { temp: obj.temp, hum: obj.hum, vib, ax: hasAccel ? obj.ax : null, ay: hasAccel ? obj.ay : null, az: hasAccel ? obj.az : null }
             setLive(clean)
             setFlags(anomalyFlags(clean))
           }
@@ -63,7 +64,7 @@ export default function App() {
       await session.command('PING')
 
       setStatus('scanning')
-      const scanRes = await session.command('SCAN')
+      const scanRes = await session.command('SCAN', 20000)   // full I2C sweep can take ~12s on an empty bus
       const detected = scanToComponents(scanRes)
       setLayout(prev => mergeLayout(prev, detected))
 

@@ -55,6 +55,7 @@ static char g_device_id[DEVICE_ID_MAXLEN + 1];
 
 static float g_temp = NAN, g_hum = NAN;  /* last good DHT reading; NAN until first */
 static volatile bool g_stream_on = false;
+static volatile bool g_mpu_ready = false;   /* set once MPU found+configured */
 
 /* ---- protocol types + helpers (Task 1 selftests reference these) ---------- */
 
@@ -279,7 +280,8 @@ static void stream_task(void *arg)
     while (1) {
         if (g_stream_on) {
             uint8_t d[14];
-            if (mpu_r(0x3B, d, 14) == ESP_OK) {
+            bool mpu_ok = g_mpu_ready && mpu_r(0x3B, d, 14) == ESP_OK;
+            if (mpu_ok) {
                 float ax = (int16_t)((d[0] << 8) | d[1]) / ACC_LSB;
                 float ay = (int16_t)((d[2] << 8) | d[3]) / ACC_LSB;
                 float az = (int16_t)((d[4] << 8) | d[5]) / ACC_LSB;
@@ -289,6 +291,10 @@ static void stream_task(void *arg)
                 else
                     printf("{\"ts\":%lld,\"temp\":%.1f,\"hum\":%.1f,\"ax\":%.3f,\"ay\":%.3f,\"az\":%.3f}\n",
                            epoch_ms(), g_temp, g_hum, ax, ay, az);
+            } else if (!isnan(g_temp)) {
+                /* MPU absent/unresponsive: still stream DHT readings. */
+                printf("{\"ts\":%lld,\"temp\":%.1f,\"hum\":%.1f,\"ax\":null,\"ay\":null,\"az\":null}\n",
+                       epoch_ms(), g_temp, g_hum);
             }
         }
         vTaskDelay(pdMS_TO_TICKS(1000 / STREAM_HZ));
@@ -345,11 +351,17 @@ void app_main(void)
     };
     ESP_ERROR_CHECK(i2c_new_master_bus(&bus_cfg, &bus));
 
-    esp_err_t err;
-    while ((err = i2c_master_probe(bus, MPU_ADDR, 200)) != ESP_OK) {
+    xTaskCreatePinnedToCore(uart_task,   "uart"  , 4096, NULL, 8, NULL, 0);
+    xTaskCreatePinnedToCore(dht_task,    "dht"   , 3072, NULL, 5, NULL, 1);
+    xTaskCreatePinnedToCore(stream_task, "stream", 3072, NULL, 5, NULL, 1);
+
+    /* MPU init is non-blocking: with no device at 0x68 the board still serves
+       IDENT/SCAN/PING and streams DHT readings (spec §4 graceful degradation). */
+    esp_err_t err = i2c_master_probe(bus, MPU_ADDR, 200);
+    if (err != ESP_OK) {
         ESP_LOGE(TAG, "no device at 0x%02X (%s) - check SDA=%d, SCL=%d, 3V3, GND",
                  MPU_ADDR, esp_err_to_name(err), SDA_IO, SCL_IO);
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        return;   /* uart/dht/stream already running — IDENT/PING/SCAN/DHT work */
     }
     ESP_LOGI(TAG, "device found at 0x%02X", MPU_ADDR);
 
@@ -359,16 +371,13 @@ void app_main(void)
         .scl_speed_hz    = 400000,
     };
     ESP_ERROR_CHECK(i2c_master_bus_add_device(bus, &dev_cfg, &mpu));
+    g_mpu_ready = true;
 
     mpu_w_retry(0x6B, 0x01);
     mpu_w_retry(0x1A, 0x03);
     mpu_w_retry(0x19, 0x00);
     mpu_w_retry(0x1B, 0x08);
     mpu_w_retry(0x1C, 0x10);
-
-    xTaskCreatePinnedToCore(uart_task,   "uart"  , 4096, NULL, 8, NULL, 0);
-    xTaskCreatePinnedToCore(dht_task,    "dht"   , 3072, NULL, 5, NULL, 1);
-    xTaskCreatePinnedToCore(stream_task, "stream", 3072, NULL, 5, NULL, 1);
 
     ESP_LOGI(TAG, "OmniTwin USB node ready — IDENT/SCAN/STREAM/PING on UART0");
 }
