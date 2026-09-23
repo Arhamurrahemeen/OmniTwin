@@ -10,18 +10,32 @@ Services run natively on Windows (no Docker). The MVP stack requires:
 - InfluxDB 2.7 on `:8086` — org/bucket `twinlab`, token `twinlab-super-secret-token`
 - MongoDB 7.0 on `:27017` — db `twinlab`, user `admin`/`twinlab123`, auth enabled
 
-Install these (e.g. `winget`), then start the whole stack from the repo root:
-
-```powershell
-powershell -File .\run.ps1
-```
-
-That spawns `ingestion.py`, `simulator.py`, the backend (`:8000`), and both Vite apps. Note the venv python path is hardcoded in `run.ps1` — create it first:
+## Setup
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -r requirements.txt
 npm install   # in frontend/ and sim-control/
+```
+
+## Run
+
+```powershell
+powershell -File .\run.ps1
+```
+
+Spawns `ingestion.py`, `simulator.py`, the backend, and both Vite apps:
+
+- Dashboard: http://localhost:5173
+- Sim-control: http://localhost:5174
+- API docs: http://localhost:8000/docs
+
+Add `-DashboardOnly` to start just the two apps (no backend/ingestion). Note the venv python path is hardcoded in `run.ps1` — create it first (see Setup).
+
+## Tests
+
+```powershell
+.\.venv\Scripts\python -m pytest tests\test_roster.py -q
 ```
 
 ## Layout
@@ -31,12 +45,6 @@ npm install   # in frontend/ and sim-control/
 - `sim-control/` — instructor console (simulator switches: overheat / vibration / offline)
 - `firmware/` — ESP32 sensor firmware (see `docs/tasks/task-9.md` for build/flash)
 - `ingestion.py` / `simulator.py` / `run.ps1` — local MQTT → Influx/Mongo data path launcher
-
-## Tests
-
-```powershell
-.\.venv\Scripts\python -m pytest tests\test_roster.py -q
-```
 
 ## Environment
 
