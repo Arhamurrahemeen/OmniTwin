@@ -24,6 +24,14 @@ cd ..\frontend; npm run build; npm run lint; node --test tests
 cd D:\OmniTwin\firmware\twinlab_node_v1; idf.py build
 ```
 
+## Live-hardware verification (bare ESP32, no sensors)
+- Flashed to COM3 (CP210x): `idf.py -p COM3 flash` OK.
+- Full serial protocol verified over the wire 1:1: IDENT -> `{"device":"ESP32","fw":"1.0","board":"twinlab-node","id":"TL-*"}`; PING -> `{"pong":true}`; SCAN -> valid JSON (`{"i2c":[...],"dht22":{"gpio":4,"ok":false}}` on the open bus); STREAM on/off -> acks. F1's quoted `name` confirmed on real bytes.
+- Boot-order fix for the bare-board case: `app_main` now starts uart/dht/stream tasks before the non-blocking MPU probe (spec 4 graceful degradation); with no sensors the board still answers IDENT/PING/SCAN and streams DHT rows. Log shows `Returned from app_main()`.
+- Full-stack bring-up green: `run.ps1` -> API :8000 + dashboard :5173 both 200; `/devices` hits Mongo (old roster rows still there); `/tutor` returns 502 with `GROQ_API_KEY` unset (expected LLM-failure path) — set a real key in `backend/.env` for a live reply.
+- Frontend tweaks from this run: `SCAN` uses a 20s timeout (117-address sweep takes ~12s on an empty bus vs the 5s default); vib is suppressed (`null`) when accel is absent so a bare board doesn't false-flag "vib above 0.2".
+- Human-demo step remains (no full sensor kit this session): reattach MPU+DHT22, refresh the dashboard, click Connect your ESP32 -> pick COM3 -> verify canvas + live values + tutor.
+
 ## Deferred / noted
 - **No physical kit on hand**: firmware flash + live twin verification are human-demo steps (needs the ESP32 + COM port).
 - Wire *drawing* on the canvas is model/rendering-ready (`addWire` + dashed SVG) but has no click-drag gesture in the UI yet - layout renders wires added programmatically.
