@@ -1,4 +1,4 @@
-# OmniTwin local dev run (native services already installed/running)
+﻿# OmniTwin local dev run (native services already installed/running)
 # T1: Mosquitto  , T2: InfluxDB 2.7 , T3: MongoDB 7.0  (native, NOT Docker)
 # InfluxDB setup values: org=twinlab bucket=twinlab user=admin pwd=twinlab123 token=twinlab-super-secret-token
 param([switch]$DashboardOnly)

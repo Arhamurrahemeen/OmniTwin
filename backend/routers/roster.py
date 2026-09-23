@@ -88,7 +88,7 @@ async def student_projects(student_id: str):
     return await db.devices.find({"owner": student_id}, {"_id": 0}).to_list(length=100)
 
 
-@router.post("/projects")
+@router.post("/projects", status_code=201)
 async def create_project(body: DeviceCreate):
     db = get_db()
     if not body.owner:
