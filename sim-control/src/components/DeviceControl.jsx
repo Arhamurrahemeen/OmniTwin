@@ -3,10 +3,9 @@ import { putSimCtrl } from "../api"
 
 const INJECT_DURATION_MS = 120_000   // 2 minutes per injector activation
 const INJECTORS = [
-  { key: "fuel_theft", label: "Inject Fuel Theft",    icon: "⛽" },
-  { key: "overheat",   label: "Inject Overheat",      icon: "🌡" },
-  { key: "overload",   label: "Inject Overload",      icon: "⚡" },
-  { key: "offline",    label: "Drop Connectivity",    icon: "📡" },
+  { key: "overheat",   label: "Inject Overheat",   icon: "🌡" },
+  { key: "vibration",  label: "Inject Vibration",  icon: "📳" },
+  { key: "offline",    label: "Drop Connectivity", icon: "📡" },
 ]
 
 export default function DeviceControl({ device }) {
@@ -61,8 +60,6 @@ export default function DeviceControl({ device }) {
     }, 200)
   }
 
-  const toggleGenerator = () => update({ generator_on: !ctrl.generator_on })
-
   const activateInjector = (key) => {
     update({
       inject: {
@@ -70,8 +67,6 @@ export default function DeviceControl({ device }) {
       },
     })
   }
-
-  const genOn = ctrl?.generator_on ?? true
 
   return (
     <div className="device-card">
@@ -81,39 +76,12 @@ export default function DeviceControl({ device }) {
         {saving && <span className="saving-dot" title="Saving…" />}
       </div>
 
-      {/* Generator toggle */}
-      <div className="control-row">
-        <label className="control-label">Generator</label>
-        <button
-          className={`gen-toggle ${genOn ? "gen-on" : "gen-off"}`}
-          onClick={toggleGenerator}
-        >
-          {genOn ? "● ON" : "○ OFF"}
-        </button>
-      </div>
-
       {/* Base value sliders */}
       <div className="sliders">
         <SliderRow
-          label="Fuel Level"
-          unit="L"
-          value={ctrl?.base_values?.fuel_level ?? 70}
-          min={0} max={200}
-          onChange={(v) => handleSliderChange("fuel_level", v)}
-          onCommit={(v)  => handleSliderCommit("fuel_level", v)}
-        />
-        <SliderRow
-          label="Load Current"
-          unit="A"
-          value={ctrl?.base_values?.load_current ?? 18}
-          min={0} max={60}
-          onChange={(v) => handleSliderChange("load_current", v)}
-          onCommit={(v)  => handleSliderCommit("load_current", v)}
-        />
-        <SliderRow
           label="Temperature"
           unit="°C"
-          value={ctrl?.base_values?.temperature ?? 35}
+          value={ctrl?.base_values?.temperature ?? 30}
           min={0} max={120}
           onChange={(v) => handleSliderChange("temperature", v)}
           onCommit={(v)  => handleSliderCommit("temperature", v)}

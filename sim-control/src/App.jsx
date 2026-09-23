@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react"
 import { getSimDevices } from "./api"
 import DeviceControl from "./components/DeviceControl"
-import DemoControlPanel from "./components/DemoControlPanel"
 import "./App.css"
 
 export default function App() {
@@ -19,11 +18,9 @@ export default function App() {
   return (
     <div className="sim-app">
       <header className="sim-header">
-        <span className="sim-title">TwinLab</span>
-        <span className="sim-subtitle">Simulator Control</span>
+        <span className="sim-title">OmniTwin</span>
+        <span className="sim-subtitle">Instructor Console</span>
       </header>
-
-      <DemoControlPanel />
 
       <main className="sim-main">
         {loading && <p className="sim-muted">Connecting to backend…</p>}

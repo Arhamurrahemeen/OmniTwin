@@ -11,14 +11,13 @@ router = APIRouter()
 
 _ID_RE = re.compile(r'^[\w\-]+$')
 
-INJECTORS = ("fuel_theft", "overheat", "overload", "offline")
+INJECTORS = ("overheat", "vibration", "offline")
 
 
 def _default_ctrl(device_id: str) -> dict:
     return {
         "device_id":    device_id,
-        "generator_on": True,
-        "base_values":  {"fuel_level": 70.0, "load_current": 18.0, "temperature": 35.0, "humidity": 55.0},
+        "base_values":  {"temperature": 30.0, "humidity": 55.0},
         "inject": {name: {"active": False, "until_ts": 0} for name in INJECTORS},
         "updated_at":   datetime.now(timezone.utc).isoformat(),
     }
@@ -61,21 +60,17 @@ async def reset_demo():
     """Nuke transient demo state so the demo can be re-run cleanly. Idempotent — safe to spam-click."""
     db = get_db()
 
-    # 1. Reset alert-engine in-memory state (cooldowns, fuel buffer, run-hours)
+    # 1. Reset alert-engine in-memory state (cooldowns)
     alert_engine.reset_state()
 
-    # 2. Deactivate all injectors on all sim devices, restore generator_on
+    # 2. Deactivate all injectors on all sim devices
     sim_docs = await db.sim_control.find({}).to_list(length=200)
     for doc in sim_docs:
         for inj_name in INJECTORS:
             doc.setdefault("inject", {})[inj_name] = {"active": False, "until_ts": 0}
-        doc["generator_on"] = True
         await db.sim_control.replace_one({"device_id": doc["device_id"]}, doc)
 
-    # 3. Zero run_hours on all devices (in-memory already cleared by reset_state)
-    await db.devices.update_many({}, {"$set": {"run_hours": 0.0, "last_run_hours_update": None}})
-
-    # 4. Purge alerts from the last 30 min so the panel starts clean for the next run
+    # 3. Purge alerts from the last 30 min so the panel starts clean for the next run
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=30)
     result = await db.alerts.delete_many({"created_at": {"$gte": cutoff}})
 
