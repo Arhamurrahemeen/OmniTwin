@@ -2,7 +2,6 @@ import logging
 from datetime import datetime, timezone
 from fastapi import APIRouter, HTTPException
 
-import alerts as alert_engine
 from db.mongo import get_db
 from models.device import DeviceCreate, DeviceResponse, DeviceUpdate
 
@@ -47,9 +46,6 @@ async def update_device(device_id: str, body: DeviceUpdate):
     result = await db.devices.update_one({"device_id": device_id}, {"$set": updates})
     if result.matched_count == 0:
         raise HTTPException(404, f"Device '{device_id}' not found")
-
-    if "run_hours" in updates:
-        alert_engine.set_run_hours(device_id, updates["run_hours"])
 
     return await db.devices.find_one({"device_id": device_id}, {"_id": 0})
 

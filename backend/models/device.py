@@ -19,9 +19,6 @@ class DeviceCreate(BaseModel):
     purchase_date: Optional[date] = None
     vendor_name: Optional[str] = None
     vendor_whatsapp: Optional[str] = None
-    run_hours: float = 0.0
-    run_hours_threshold: int = 500
-    last_run_hours_update: Optional[datetime] = None
     contacts: list[dict] = []
 
 
@@ -40,9 +37,6 @@ class DeviceUpdate(BaseModel):
     purchase_date: Optional[date] = None
     vendor_name: Optional[str] = None
     vendor_whatsapp: Optional[str] = None
-    run_hours: Optional[float] = None
-    run_hours_threshold: Optional[int] = None
-    last_run_hours_update: Optional[datetime] = None
     contacts: Optional[list[dict]] = None
 
 
@@ -62,9 +56,6 @@ class DeviceResponse(BaseModel):
     purchase_date: Optional[date] = None
     vendor_name: Optional[str] = None
     vendor_whatsapp: Optional[str] = None
-    run_hours: float = 0.0
-    run_hours_threshold: int = 500
-    last_run_hours_update: Optional[datetime] = None
     contacts: list[dict] = []
     created_at: datetime
     updated_at: datetime
