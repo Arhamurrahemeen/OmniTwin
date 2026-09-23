@@ -11,20 +11,18 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 import alerts as alert_engine
-import push
 from config import settings
 from db.influx import close_influx
 from db.mongo import close_mongo, connect_mongo, get_db
-from routers import devices, readings, ws, chat, rul, sim as sim_router
+from routers import devices, readings, ws, sim as sim_router
 from routers import alerts as alerts_router
-from routers import push as push_router
 from routers.ws import manager
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
 )
-log = logging.getLogger("twinlab")
+log = logging.getLogger("omnitwin")
 
 _loop: asyncio.AbstractEventLoop = None
 
@@ -63,16 +61,8 @@ def _on_mqtt_message(client, userdata, msg):
             alert = alert_engine.evaluate(device_id, sensor_name, data["value"], data["unit"], _last_known)
             if alert:
                 asyncio.run_coroutine_threadsafe(_persist_alert(alert), _loop)
-            if sensor_name == "load_current":
-                run_hours_alert = alert_engine.evaluate_run_hours(device_id, data["value"])
-                if run_hours_alert:
-                    asyncio.run_coroutine_threadsafe(_persist_alert(run_hours_alert), _loop)
-            elif sensor_name == "vibration":
-                run_hours_alert = alert_engine.evaluate_run_hours_vibration(device_id, data["value"])
-                if run_hours_alert:
-                    asyncio.run_coroutine_threadsafe(_persist_alert(run_hours_alert), _loop)
     except Exception as e:
-        log.error(f"[MQTT] WS push error: {e}")
+        log.error(f"[MQTT] broadcast error: {e}")
 
 
 def _json_safe(d: dict) -> dict:
@@ -83,36 +73,12 @@ def _json_safe(d: dict) -> dict:
 async def _persist_alert(alert: dict) -> None:
     try:
         db = get_db()
-
-        # Resolve full device doc — push body wants the display name / vendor
-        device_doc = await db.devices.find_one({"device_id": alert["device_id"]}, {"_id": 0}) or {}
-
-        if alert["alert_type"] == "consumable_reorder":
-            await db.devices.update_one(
-                {"device_id": alert["device_id"]},
-                {"$set": {"run_hours": 0.0, "last_run_hours_update": datetime.now(timezone.utc)}},
-            )
-
-        result = await db.alerts.insert_one(dict(alert))
+        await db.alerts.insert_one(dict(alert))
         await manager.broadcast(alert["device_id"], {**_json_safe(alert), "type": "alert"})
         log.info(
             f"[ALERT] {alert['alert_type']} {alert['severity']} — "
             f"{alert['device_id']}/{alert['sensor']} — {alert['detail']}"
         )
-
-        # Push via FCM in a thread (firebase-admin is sync)
-        tokens = [
-            t["token"] for t in
-            await db.push_tokens.find({}, {"_id": 0, "token": 1}).to_list(length=500)
-        ]
-        if tokens:
-            loop = asyncio.get_running_loop()
-            res  = await loop.run_in_executor(None, push.send_alert, alert, device_doc, tokens)
-            await db.alerts.update_one(
-                {"_id": result.inserted_id}, {"$set": {"push_sent": res["sent"] > 0}}
-            )
-            if res["invalid"]:
-                await db.push_tokens.delete_many({"token": {"$in": res["invalid"]}})
     except Exception as e:
         log.error(f"[ALERT] persist failed: {e}")
 
@@ -138,15 +104,13 @@ async def lifespan(app: FastAPI):
     _loop = asyncio.get_running_loop()
     await connect_mongo()
     await alert_engine.refresh_cache()
-    await alert_engine.seed_run_hours()
     asyncio.create_task(alert_engine.cache_loop())
-    asyncio.create_task(alert_engine.flush_run_hours_loop())
     threading.Thread(target=_start_mqtt, daemon=True, name="mqtt-subscriber").start()
-    log.info("[TwinLab] Backend started")
+    log.info("[OmniTwin] Backend started")
     yield
     close_influx()
     await close_mongo()
-    log.info("[TwinLab] Backend stopped")
+    log.info("[OmniTwin] Backend stopped")
 
 
 app = FastAPI(title="TwinLab API", version="0.2.0", lifespan=lifespan)
@@ -170,11 +134,9 @@ async def discover_devices():
 app.include_router(devices.router,       prefix="/devices", tags=["devices"])
 app.include_router(readings.router,      prefix="/devices", tags=["readings"])
 app.include_router(alerts_router.router, prefix="/devices", tags=["alerts"])
-app.include_router(rul.router,           prefix="/devices", tags=["rul"])
 app.include_router(sim_router.router,    prefix="/sim",     tags=["sim-control"])
-app.include_router(chat.router,          tags=["chat"])
 app.include_router(ws.router,            tags=["websocket"])
-app.include_router(push_router.router,   prefix="/push",    tags=["push"])
+# app.include_router(roster.router, tags=["roster"])   # ADDED in Task 5
 
 
 @app.get("/health", tags=["system"])

@@ -5,5 +5,5 @@ uvicorn[standard]
 motor
 pydantic-settings
 numpy
-groq
-firebase-admin
+pytest
+httpx
