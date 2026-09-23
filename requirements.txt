@@ -7,3 +7,4 @@ pydantic-settings
 numpy
 pytest
 httpx
+python-multipart
