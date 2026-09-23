@@ -1,0 +1,30 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.idea/
+.claude
+
+# Environment — contains credentials, never commit
+backend/.env
+backend/fcm-service-account.json
+firmware/twinlab_node_v1/main/secrets.h
+
+# ESP-IDF build output
+firmware/twinlab_node_v1/build/
+firmware/twinlab_node_v1/main/build/
+firmware/twinlab_node_v1/sdkconfig
+firmware/twinlab_node_v1/sdkconfig.old
+
+# Mosquitto runtime
+mosquitto/data/
+mosquitto/log/
+
+# Node
+node_modules/
+dist/
+
+# Runtime logs
+*.log

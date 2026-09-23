@@ -1,0 +1,181 @@
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: "Inter", system-ui, sans-serif;
+  background: #f5f0e8;
+  color: #1a1a1a;
+  min-height: 100vh;
+}
+
+/* ── Layout ───────────────────────────────────────────── */
+.sim-app   { display: flex; flex-direction: column; min-height: 100vh; }
+
+.sim-header {
+  background: #1a1a2e;
+  color: #fff;
+  padding: 14px 24px;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.sim-title    { font-size: 1.2rem; font-weight: 700; letter-spacing: 0.02em; }
+.sim-subtitle { font-size: 0.85rem; color: #9ca3af; }
+
+.sim-main {
+  flex: 1;
+  padding: 24px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.sim-muted { color: #6b7280; font-size: 0.9rem; }
+.sim-error { color: #dc2626; font-size: 0.9rem; }
+
+/* ── Demo Control Panel ──────────────────────────────── */
+.demo-panel {
+  background: #1a1a2e;
+  color: #fff;
+  padding: 14px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.demo-panel-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #9ca3af;
+}
+.demo-panel-buttons { display: flex; gap: 10px; flex-wrap: wrap; }
+.demo-btn {
+  background: #2a2a45;
+  color: #fff;
+  border: 1px solid #3a3a5a;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.demo-btn:hover:not(:disabled) { background: #3a3a5a; }
+.demo-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.demo-btn--theft { border-color: #dc2626; }
+.demo-btn--reset { margin-left: auto; background: #374151; }
+.demo-simulated-pill {
+  background: #dc2626;
+  color: #fff;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 1px 6px;
+  border-radius: 4px;
+}
+.demo-status { font-size: 0.8rem; }
+.demo-status--ok    { color: #4ade80; }
+.demo-status--error { color: #f87171; }
+
+/* ── Device card ─────────────────────────────────────── */
+.device-card {
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  padding: 20px;
+  min-width: 340px;
+  max-width: 420px;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.device-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.device-name  { font-weight: 600; font-size: 1rem; flex: 1; }
+.sim-badge    { background: #e0f2fe; color: #0369a1; font-size: 0.7rem; font-weight: 700; padding: 2px 7px; border-radius: 4px; }
+.saving-dot   { width: 8px; height: 8px; border-radius: 50%; background: #f59e0b; animation: pulse 1s infinite; }
+
+@keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+/* ── Generator toggle ────────────────────────────────── */
+.control-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.control-label { font-size: 0.85rem; color: #6b7280; width: 90px; }
+
+.gen-toggle {
+  padding: 6px 16px;
+  border-radius: 20px;
+  border: none;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 0.9rem;
+  transition: background 0.2s;
+}
+.gen-on  { background: #dcfce7; color: #15803d; }
+.gen-off { background: #fee2e2; color: #dc2626; }
+.gen-on:hover  { background: #bbf7d0; }
+.gen-off:hover { background: #fecaca; }
+
+/* ── Sliders ─────────────────────────────────────────── */
+.sliders { display: flex; flex-direction: column; gap: 10px; }
+
+.slider-row {
+  display: grid;
+  grid-template-columns: 90px 1fr 64px;
+  align-items: center;
+  gap: 10px;
+}
+.slider-label { font-size: 0.82rem; color: #6b7280; }
+.slider-value { font-size: 0.85rem; font-weight: 600; text-align: right; }
+
+input[type="range"] {
+  width: 100%;
+  accent-color: #1a1a2e;
+  cursor: pointer;
+}
+
+/* ── Injectors ───────────────────────────────────────── */
+.injectors {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.injector-btn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1.5px solid #e5e7eb;
+  background: #f9fafb;
+  cursor: pointer;
+  font-size: 0.82rem;
+  font-weight: 500;
+  transition: background 0.15s, border-color 0.15s;
+}
+.injector-btn:hover:not(:disabled) {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+}
+.injector-btn:disabled { opacity: 0.5; cursor: default; }
+
+.injector-active {
+  background: #fef3c7;
+  border-color: #f59e0b;
+  color: #92400e;
+}
+
+.inj-icon  { font-size: 1rem; }
+.inj-label { font-variant-numeric: tabular-nums; }

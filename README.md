@@ -1,0 +1,3 @@
+# OmniTwin
+
+OmniTwin is a hands-on digital twin learning platform: students connect a low-cost ESP32 + sensor kit to a software platform that mirrors real physical sensor data in a live interactive dashboard, with AI-assisted fault detection and coaching that guides (never autonomously controls) the hardware. The MVP pilot targets engineering students in Pakistan — starting at DUET — and consists of this codebase, adapted from the TwinLab_v2 prototype, spanning an MQTT-ingesting FastAPI backend (`backend/`), a Vite/React dashboard (`frontend/`), a device/simulation control service (`sim-control/`), and the ESP32 firmware (`firmware/`). See `docs/` for the full product spec, design, and team details.
