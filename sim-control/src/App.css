@@ -2,7 +2,6 @@
   --ot-green:  #0F6E56;
   --ot-ink:    #04342C;
   --ot-paper:  #F1EFE8;
-  --ot-orange: #D85A30;
   --ot-border: #E3E0D6;
 }
 
@@ -83,7 +82,7 @@ body {
   padding: 2px 7px;
   border-radius: 4px;
 }
-.saving-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ot-orange); animation: pulse 1s infinite; }
+.saving-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ot-green); animation: pulse 1s infinite; }
 
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 

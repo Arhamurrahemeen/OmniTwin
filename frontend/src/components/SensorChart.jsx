@@ -7,7 +7,7 @@ import { getReadings } from '../api'
 
 const SENSOR_COLORS = {
   temperature: '#4ECDC4',
-  humidity:    '#56C596',
+  humidity:    '#0F6E56',
   accel_x:     '#A78BFA',
   accel_y:     '#F59E0B',
   accel_z:     '#60A5FA',
@@ -67,7 +67,7 @@ export default function SensorChart({ deviceId, sensor, liveMessages, threshold 
   )
 
   const valueColor = breachState === 'critical' ? '#E05252'
-                   : breachState === 'caution'  ? '#F5C842'
+                   : breachState === 'caution'  ? '#D85A30'
                    : null
 
   return (
@@ -82,24 +82,24 @@ export default function SensorChart({ deviceId, sensor, liveMessages, threshold 
       </div>
       <ResponsiveContainer width="100%" height={150}>
         <LineChart data={chartData} margin={{ top: 4, right: 8, left: -28, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="#2E3542" vertical={false} />
+          <CartesianGrid strokeDasharray="3 3" stroke="#E3E0D6" vertical={false} />
           <XAxis
             dataKey="ts"
             tickFormatter={fmt}
-            tick={{ fill: '#8A96A8', fontSize: 10 }}
+            tick={{ fill: '#6A7888', fontSize: 10 }}
             minTickGap={50}
             axisLine={false}
             tickLine={false}
           />
           <YAxis
-            tick={{ fill: '#8A96A8', fontSize: 10 }}
+            tick={{ fill: '#6A7888', fontSize: 10 }}
             axisLine={false}
             tickLine={false}
             width={48}
           />
           <Tooltip
-            contentStyle={{ background: '#252B35', border: '1px solid #2E3542', borderRadius: 6, fontSize: 12 }}
-            labelStyle={{ color: '#8A96A8' }}
+            contentStyle={{ background: '#fff', border: '1px solid #E3E0D6', borderRadius: 6, fontSize: 12 }}
+            labelStyle={{ color: '#04342C' }}
             itemStyle={{ color }}
             labelFormatter={fmt}
             formatter={(v) => [`${v.toFixed(4)} ${latest?.unit ?? ''}`, sensor]}
@@ -107,10 +107,10 @@ export default function SensorChart({ deviceId, sensor, liveMessages, threshold 
           {threshold?.min != null && (
             <ReferenceLine
               y={threshold.min}
-              stroke="#F5C842"
+              stroke="#D85A30"
               strokeDasharray="4 3"
               strokeWidth={1.2}
-              label={{ value: `min ${threshold.min}`, fill: '#F5C842', fontSize: 9, position: 'insideTopLeft' }}
+              label={{ value: `min ${threshold.min}`, fill: '#D85A30', fontSize: 9, position: 'insideTopLeft' }}
             />
           )}
           {threshold?.max != null && (
