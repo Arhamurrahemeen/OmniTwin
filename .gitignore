@@ -22,6 +22,9 @@ firmware/twinlab_node_v1/sdkconfig.old
 mosquitto/data/
 mosquitto/log/
 
+# Editor
+.vscode/
+
 # Node
 node_modules/
 dist/
