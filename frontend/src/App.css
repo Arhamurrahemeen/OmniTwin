@@ -742,3 +742,52 @@
   padding: 6px 8px;
   text-align: center;
 }
+.twin-canvas {
+  position: relative;
+}
+
+.tutor-panel {
+  width: 300px;
+  padding: 16px;
+  border: 1px solid var(--ot-green);
+  border-radius: 8px;
+  background: var(--ot-paper);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.tutor-panel h3 {
+  margin: 0;
+  font-family: 'JetBrains Mono', monospace;
+  color: var(--ot-ink);
+}
+
+.tutor-thread {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 120px;
+  font-size: 13px;
+}
+
+.tutor-user {
+  color: var(--ot-ink);
+}
+
+.tutor-ai {
+  color: var(--ot-green);
+}
+
+.tutor-error {
+  color: var(--ot-orange);
+}
+
+.tutor-panel form {
+  display: flex;
+  gap: 6px;
+}
+
+.tutor-panel input {
+  flex: 1;
+}

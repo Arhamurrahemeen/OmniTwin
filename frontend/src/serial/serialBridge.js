@@ -58,7 +58,7 @@ export class SerialSession {
   async command(cmd, timeoutMs = 5000) {
     if (!this.writer) throw new Error('Serial session not open')
     if (this._resolver) throw new Error('Command already in flight')
-    const reply = new Promise((resolve, reject) => { this._resolver = resolve })
+    const reply = new Promise((resolve) => { this._resolver = resolve })
     await this.writer.write(new TextEncoder().encode(cmd + '\n'))
     return withTimeout(reply, timeoutMs)
   }
