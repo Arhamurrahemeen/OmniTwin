@@ -4,7 +4,7 @@ import logging
 import threading
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime
 
 import paho.mqtt.client as mqtt
 from fastapi import FastAPI, HTTPException
