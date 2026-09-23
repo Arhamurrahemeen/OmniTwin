@@ -20,6 +20,7 @@ class DeviceCreate(BaseModel):
     vendor_name: Optional[str] = None
     vendor_whatsapp: Optional[str] = None
     contacts: list[dict] = []
+    owner: Optional[str] = None
 
 
 class DeviceUpdate(BaseModel):
@@ -38,6 +39,7 @@ class DeviceUpdate(BaseModel):
     vendor_name: Optional[str] = None
     vendor_whatsapp: Optional[str] = None
     contacts: Optional[list[dict]] = None
+    owner: Optional[str] = None
 
 
 class DeviceResponse(BaseModel):
@@ -57,5 +59,6 @@ class DeviceResponse(BaseModel):
     vendor_name: Optional[str] = None
     vendor_whatsapp: Optional[str] = None
     contacts: list[dict] = []
+    owner: Optional[str] = None
     created_at: datetime
     updated_at: datetime
