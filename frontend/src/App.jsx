@@ -4,6 +4,7 @@ import SensorChart from './components/SensorChart'
 import AlertsPanel from './components/AlertsPanel'
 import RosterPanel from './components/RosterPanel'
 import { useDeviceSocket } from './hooks/useDeviceSocket'
+import wordmark from './assets/wordmark.png'
 import './App.css'
 
 export default function App() {
@@ -14,12 +15,7 @@ export default function App() {
     <div className="app">
       <header className="navbar">
         <div className="navbar-brand">
-          <div className="brand-mark">
-            <span className="bm-a" />
-            <span className="bm-b" />
-          </div>
-          <span className="brand-twin">Twin</span>
-          <span className="brand-lab">Lab</span>
+          <img className="navbar-wordmark" src={wordmark} alt="OmniTwin" />
         </div>
         <span className="navbar-sep" />
         <span className="navbar-sub">Digital twin learning lab</span>

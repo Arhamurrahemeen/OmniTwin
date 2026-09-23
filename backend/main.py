@@ -114,7 +114,7 @@ async def lifespan(app: FastAPI):
     log.info("[OmniTwin] Backend stopped")
 
 
-app = FastAPI(title="TwinLab API", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="OmniTwin API", version="0.2.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

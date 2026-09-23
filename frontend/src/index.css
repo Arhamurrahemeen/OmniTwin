@@ -10,9 +10,9 @@ html, body, #root {
 }
 
 body {
-  font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
-  background: #1E2128;
-  color: #E8EDF2;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+  background: #F1EFE8;
+  color: #04342C;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-size: 14px;

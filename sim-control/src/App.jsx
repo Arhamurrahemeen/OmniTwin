@@ -19,7 +19,7 @@ export default function App() {
     <div className="sim-app">
       <header className="sim-header">
         <span className="sim-title">OmniTwin</span>
-        <span className="sim-subtitle">Instructor Console</span>
+        <span className="sim-subtitle">· Instructor Console</span>
       </header>
 
       <main className="sim-main">
