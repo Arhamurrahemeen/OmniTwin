@@ -1,22 +1,25 @@
 import { useEffect, useState } from 'react'
 import { updateThreshold, buildThresholds } from '../threshold-utils'
 import { sensorOptionsFor } from '../sensor-options'
-import { discoverDevices } from '../api'
+import { discoverDevices, createProject } from '../api'
 
 const BASE = '/api'
 
-export default function RegisterDevice({ onCreated, onClose }) {
+export default function RegisterDevice({ onCreated, onClose, mode = 'project', initialOwner = '' }) {
   const [form, setForm] = useState({
     device_id: '',
+    owner: initialOwner,
     name: '',
     location: '',
     sensors: [],
-    source: 'simulator',
+    source: mode === 'hardware' ? 'hardware' : 'simulator',
   })
   const [thresholds, setThresholds] = useState({})
   const [error, setError]   = useState('')
   const [saving, setSaving] = useState(false)
   const [discovered, setDiscovered] = useState([])
+
+  const isHardware = mode === 'hardware'
 
   const set = (field) => (e) => setForm(f => ({ ...f, [field]: e.target.value }))
 
@@ -34,82 +37,111 @@ export default function RegisterDevice({ onCreated, onClose }) {
     setThresholds(prev => updateThreshold(prev, sensor, bound, raw))
 
   useEffect(() => {
-    if (form.source !== 'hardware') { setDiscovered([]); return }
+    if (!isHardware) { setDiscovered([]); return }
     discoverDevices().then(setDiscovered).catch(() => setDiscovered([]))
     const allowed = sensorOptionsFor('hardware')
     setForm(f => ({ ...f, sensors: f.sensors.filter(s => allowed.includes(s)) }))
-  }, [form.source])
+  }, [isHardware])
 
   const submit = async (e) => {
     e.preventDefault()
     setError('')
-    if (!form.device_id.trim() || !form.name.trim()) {
-      setError('Device ID and Name are required.')
+    if (!form.name.trim() || (!isHardware && !form.owner.trim()) || (isHardware && !form.device_id.trim())) {
+      setError(isHardware ? 'Device ID and Name are required.' : 'Owner (student email) and Project Name are required.')
       return
     }
     setSaving(true)
     try {
-      const res = await fetch(`${BASE}/devices`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          device_id:  form.device_id.trim(),
-          name:       form.name.trim(),
-          location:   form.location.trim(),
-          sensors:    sensorList,
-          source:     form.source,
+      if (isHardware) {
+        const res = await fetch(`${BASE}/devices`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            device_id:  form.device_id.trim(),
+            name:       form.name.trim(),
+            location:   form.location.trim(),
+            sensors:    sensorList,
+            source:     'hardware',
+            thresholds: buildThresholds(sensorList, thresholds),
+          }),
+        })
+        if (!res.ok) {
+          const data = await res.json()
+          setError(data.detail ?? 'Registration failed.')
+          return
+        }
+      } else {
+        await createProject({
+          device_id: 'project',
+          name:     form.name.trim(),
+          owner:    form.owner.trim(),
+          location: form.location.trim(),
+          sensors:  sensorList,
           thresholds: buildThresholds(sensorList, thresholds),
-        }),
-      })
-      if (!res.ok) {
-        const data = await res.json()
-        setError(data.detail ?? 'Registration failed.')
-        return
+        })
       }
       onCreated()
-    } catch {
-      setError('Network error.')
+    } catch (err) {
+      setError(err.message ?? 'Network error.')
     } finally {
       setSaving(false)
     }
   }
 
+  const title = isHardware ? 'Register Hardware Kit' : 'Create Project'
+
   return (
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal" onClick={e => e.stopPropagation()}>
         <div className="modal-header">
-          <span className="modal-title">Register Device</span>
+          <span className="modal-title">{title}</span>
           <button className="modal-close" onClick={onClose}>✕</button>
         </div>
 
         <form className="modal-form" onSubmit={submit}>
-          <label className="field-label">Device ID *</label>
-          <input
-            className="field-input"
-            placeholder="e.g. shell-mpx-gen-1"
-            value={form.device_id}
-            onChange={set('device_id')}
-          />
-          {form.source === 'hardware' && discovered.length > 0 && (
+          {isHardware && (
             <>
-              <label className="field-label">
-                Or pick a live unregistered device <span className="field-hint">(seen on MQTT)</span>
-              </label>
-              <select
+              <label className="field-label">Device ID *</label>
+              <input
                 className="field-input"
-                value=""
-                onChange={e => setForm(f => ({ ...f, device_id: e.target.value }))}
-              >
-                <option value="" disabled>Select a discovered device…</option>
-                {discovered.map(id => <option key={id} value={id}>{id}</option>)}
-              </select>
+                placeholder="e.g. TL-A1B2C3D4"
+                value={form.device_id}
+                onChange={set('device_id')}
+              />
+              {discovered.length > 0 && (
+                <>
+                  <label className="field-label">
+                    Or pick a live unregistered device <span className="field-hint">(seen on MQTT)</span>
+                  </label>
+                  <select
+                    className="field-input"
+                    value=""
+                    onChange={e => setForm(f => ({ ...f, device_id: e.target.value }))}
+                  >
+                    <option value="" disabled>Select a discovered device…</option>
+                    {discovered.map(id => <option key={id} value={id}>{id}</option>)}
+                  </select>
+                </>
+              )}
             </>
           )}
 
-          <label className="field-label">Name *</label>
+          {!isHardware && (
+            <>
+              <label className="field-label">Owner (student email) *</label>
+              <input
+                className="field-input"
+                placeholder="e.g. ali@duet.edu.pk"
+                value={form.owner}
+                onChange={set('owner')}
+              />
+            </>
+          )}
+
+          <label className="field-label">Project Name *</label>
           <input
             className="field-input"
-            placeholder="e.g. Shell Mirpurkhas — Generator 1"
+            placeholder="e.g. Battery Health Twin"
             value={form.name}
             onChange={set('name')}
           />
@@ -117,16 +149,10 @@ export default function RegisterDevice({ onCreated, onClose }) {
           <label className="field-label">Location</label>
           <input
             className="field-input"
-            placeholder="e.g. Mirpurkhas"
+            placeholder="e.g. Lab 2"
             value={form.location}
             onChange={set('location')}
           />
-
-          <label className="field-label">Source</label>
-          <select className="field-input" value={form.source} onChange={set('source')}>
-            <option value="simulator">Simulator</option>
-            <option value="hardware">Hardware (ESP32)</option>
-          </select>
 
           <label className="field-label">Sensors</label>
           <div className="sensor-checkbox-group">
@@ -145,7 +171,7 @@ export default function RegisterDevice({ onCreated, onClose }) {
           {sensorList.length > 0 && (
             <>
               <label className="field-label">
-                Thresholds <span className="field-hint">(optional — leave blank to skip)</span>
+                Thresholds <span className="field-hint">(optional — defaults applied if blank)</span>
               </label>
               <div className="threshold-header-row">
                 <span />
@@ -177,7 +203,7 @@ export default function RegisterDevice({ onCreated, onClose }) {
           {error && <p className="field-error">{error}</p>}
 
           <button className="btn-primary" type="submit" disabled={saving}>
-            {saving ? 'Registering…' : 'Register'}
+            {saving ? (isHardware ? 'Registering…' : 'Creating…') : (isHardware ? 'Register Kit' : 'Create Project')}
           </button>
         </form>
       </div>

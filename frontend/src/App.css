@@ -166,6 +166,29 @@
 }
 
 /* ─── Device list panel ──────────────────────────────────── */
+.left-rail {
+  display: flex;
+  flex-direction: column;
+  width: 228px;
+  border-right: 1px solid #2E3542;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.left-rail .device-list {
+  width: auto;
+  border-right: none;
+  flex: 1 1 55%;
+  min-height: 0;
+}
+
+.left-rail .roster-panel {
+  width: auto;
+  border-right: none;
+  flex: 0 0 45%;
+  gap: 7px;
+}
+
 .device-list {
   width: 228px;
   border-right: 1px solid #2E3542;
@@ -251,6 +274,55 @@
   padding: 1px 5px;
   letter-spacing: 0.2px;
 }
+
+/* ─── Roster panel ───────────────────────────────────────── */
+.roster-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.roster-error {
+  color: #E05252;
+}
+
+.roster-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  background: #1E2128;
+  border: 1px solid #2E3542;
+  border-radius: 6px;
+  padding: 7px 9px;
+}
+
+.roster-row--free {
+  cursor: pointer;
+}
+
+.roster-row--free:hover {
+  border-color: #4A9B8E88;
+  background: #232830;
+}
+
+.roster-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: #E8EDF2;
+}
+
+.roster-email {
+  font-size: 11px;
+  color: #8A96A8;
+  word-break: break-all;
+}
+
+.roster-quota {
+  font-size: 10px;
+  color: #8A96A8;
+  letter-spacing: 0.3px;
+}
+
+.roster-row--free .roster-quota { color: #56C596; }
 
 /* ─── Charts area ────────────────────────────────────────── */
 .charts-area {
@@ -448,6 +520,12 @@
   font-size: 11px;
   color: #8A96A8;
   font-style: italic;
+}
+
+.alert-hint {
+  font-size: 11px;
+  color: #56C596;
+  line-height: 1.45;
 }
 
 .alert-routed-to {

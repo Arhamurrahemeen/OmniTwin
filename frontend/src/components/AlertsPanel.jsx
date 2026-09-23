@@ -44,7 +44,7 @@ export default function AlertsPanel({ device, liveMessages = [] }) {
         )}
       </div>
 
-      {!device && <p className="muted">Select a device.</p>}
+      {!device && <p className="muted">Select a project.</p>}
 
       {device && loading && alerts.length === 0 && (
         <p className="muted">Loading…</p>
@@ -58,23 +58,16 @@ export default function AlertsPanel({ device, liveMessages = [] }) {
         <div key={i} className={`alert-item alert-item--${a.severity ?? 'warning'}`}>
           <div className="alert-top-row">
             <span className="alert-sensor">
-              {a.alert_type === 'consumable_reorder' && '🛒 '}
               {(a.sensor ?? '').replace(/_/g, ' ')}
             </span>
-            <span className={`alert-type-tag alert-type-tag--${a.alert_type}`}>
-              {a.alert_type === 'fuel_theft' ? 'fuel theft'
-                : a.alert_type === 'consumable_reorder' ? 'consumable reorder'
-                : 'threshold'}
-            </span>
+            <span className="alert-type-tag alert-type-tag--threshold">threshold</span>
           </div>
           <span className="alert-value">
             {typeof a.value === 'number' ? a.value.toFixed(2) : a.value}
             {' '}<span className="alert-unit">{a.unit}</span>
           </span>
           {a.detail && <span className="alert-detail">{a.detail}</span>}
-          {a.push_sent && (
-            <span className="alert-routed-to">📲 Pushed</span>
-          )}
+          {a.hint_en && <span className="alert-hint">{a.hint_en}</span>}
           <span className="alert-ts">{new Date(a.ts).toLocaleTimeString()}</span>
         </div>
       ))}

@@ -1,12 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
-import { getDevices, getAlerts, deleteDevice } from '../api'
+import { useMemo, useState } from 'react'
+import { getDevices, deleteDevice } from '../api'
 import RegisterDevice from './RegisterDevice'
 import EditDevice from './EditDevice'
 
-// Fixed demo plant order (NFL Recon §2.3 cross-plant narrative); unlisted
-// locations (e.g. legacy non-NFL devices) sort after, alphabetically.
+// Fixed demo order for legacy groups; unlisted locations sort after, alphabetically.
 const PLANT_ORDER = ['SITE Karachi Plant', 'Faisalabad Plant', 'Sharjah Plant', 'Kunri (sourced by Faisalabad)']
-const CRITICALITY_ORDER = { high: 0, medium: 1, low: 2 }
 
 function groupByPlant(devices) {
   const groups = new Map()
@@ -23,19 +21,7 @@ function groupByPlant(devices) {
     if (ib === -1) return -1
     return ia - ib
   })
-  return sortedGroups.map(([plant, list]) => [
-    plant,
-    [...list].sort((a, b) => (CRITICALITY_ORDER[a.criticality] ?? 3) - (CRITICALITY_ORDER[b.criticality] ?? 3)),
-  ])
-}
-
-// Traffic-light rule: red <= 30 days (or expired), yellow <= 180 days, else green.
-function warrantyStatus(expiry) {
-  if (!expiry) return null
-  const daysLeft = (new Date(expiry) - new Date()) / 86_400_000
-  if (daysLeft <= 30) return 'red'
-  if (daysLeft <= 180) return 'yellow'
-  return 'green'
+  return sortedGroups.map(([plant, list]) => [plant, list])
 }
 
 export default function DeviceList({ selectedId, onSelect }) {
@@ -43,26 +29,16 @@ export default function DeviceList({ selectedId, onSelect }) {
   const [error, setError]           = useState(null)
   const [showRegister, setShowRegister] = useState(false)
   const [editDevice, setEditDevice] = useState(null)
-  const [alertsToday, setAlertsToday] = useState(0)
 
   const load = () => {
     getDevices()
       .then(setDevices)
-      .catch(() => setError('Could not load devices'))
+      .catch(() => setError('Could not load projects'))
   }
 
-  useEffect(() => { load() }, [])
-
-  // Cross-plant summary strip data — reuses the existing per-device alerts
-  // endpoint (no new backend endpoint this phase).
-  useEffect(() => {
-    if (devices.length === 0) { setAlertsToday(0); return }
-    const cutoffMs = new Date().setHours(0, 0, 0, 0)
-    Promise.all(devices.map(d => getAlerts(d.device_id, 100).catch(() => [])))
-      .then(results => setAlertsToday(results.flat().filter(a => a.ts >= cutoffMs).length))
-  }, [devices])
-
   const plantGroups = useMemo(() => groupByPlant(devices), [devices])
+
+  const sharedKitCount = devices.filter(d => d.source === 'hardware').length
 
   const handleUpdated = (updated) => {
     setEditDevice(null)
@@ -77,29 +53,29 @@ export default function DeviceList({ selectedId, onSelect }) {
       load()
       if (d.device_id === selectedId) onSelect(null)
     } catch {
-      setError('Could not delete device')
+      setError('Could not delete project')
     }
   }
 
   return (
     <aside className="panel device-list">
       <div className="panel-title-row">
-        <p className="panel-title">Devices</p>
-        <button className="add-btn" onClick={() => setShowRegister(true)} title="Register device">+</button>
+        <p className="panel-title">Projects</p>
+        <button className="add-btn" onClick={() => setShowRegister(true)} title="Create project">+</button>
       </div>
 
       {devices.length > 0 && (
         <p className="plant-summary-strip">
-          {plantGroups.length} plants · {devices.length} assets · {alertsToday} active alerts today
+          {devices.length} projects · {sharedKitCount} shared demo kit
         </p>
       )}
 
       {error && <p className="muted">{error}</p>}
-      {!error && devices.length === 0 && <p className="muted">No devices registered.</p>}
+      {!error && devices.length === 0 && <p className="muted">No projects yet.</p>}
 
       {plantGroups.map(([plant, plantDevices]) => (
         <div key={plant} className="plant-group">
-          <p className="plant-group-header">{plant} · {plantDevices.length} device{plantDevices.length === 1 ? '' : 's'}</p>
+          <p className="plant-group-header">{plant} · {plantDevices.length} project{plantDevices.length === 1 ? '' : 's'}</p>
 
           {plantDevices.map(d => (
             <div
@@ -113,40 +89,26 @@ export default function DeviceList({ selectedId, onSelect }) {
               <div className="device-card-top">
                 <span className="device-name">{d.name}</span>
                 <div className="device-card-actions">
-                  {d.criticality && (
-                    <span className={`criticality-badge criticality-badge--${d.criticality}`}>
-                      {d.criticality}
-                    </span>
-                  )}
                   <span className={`source-badge source-badge--${d.source ?? 'simulator'}`}>
                     {d.source === 'hardware' ? 'HW' : 'SIMULATED'}
                   </span>
                   <button
                     className="edit-btn"
-                    title="Edit device"
+                    title="Edit project"
                     onClick={(e) => { e.stopPropagation(); setEditDevice(d) }}
                   >
                     ✎
                   </button>
                   <button
                     className="delete-btn"
-                    title="Delete device"
+                    title="Delete project"
                     onClick={(e) => { e.stopPropagation(); handleDelete(d) }}
                   >
                     🗑
                   </button>
                 </div>
               </div>
-              <span className="device-location">{d.location}</span>
-              {d.warranty_expiry && (
-                <span className="device-warranty">
-                  <span className={`warranty-dot warranty-dot--${warrantyStatus(d.warranty_expiry)}`} />
-                  warranty {d.warranty_expiry}
-                </span>
-              )}
-              {d.status && d.status !== 'active' && (
-                <span className="status-inactive">inactive</span>
-              )}
+              <span className="device-location">{d.owner || 'Shared'}</span>
               {d.sensors?.length > 0 && (
                 <div className="device-sensors">
                   {d.sensors.map(s => <span key={s} className="sensor-tag">{s}</span>)}
@@ -159,6 +121,7 @@ export default function DeviceList({ selectedId, onSelect }) {
 
       {showRegister && (
         <RegisterDevice
+          mode="project"
           onCreated={() => { setShowRegister(false); load() }}
           onClose={() => setShowRegister(false)}
         />
