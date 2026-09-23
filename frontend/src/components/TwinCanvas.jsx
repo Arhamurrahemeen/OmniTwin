@@ -7,6 +7,7 @@ import { COMPONENTS } from '../serial/serialModel.mjs'
 
 export default function TwinCanvas({ layout, live = {}, flags = [], onMove, onAdd }) {
   const [dragging, setDragging] = useState(null)
+  const [addType, setAddType] = useState('breadboard')
 
   const onPointerDown = (c) => (e) => {
     e.stopPropagation()
@@ -65,7 +66,18 @@ export default function TwinCanvas({ layout, live = {}, flags = [], onMove, onAd
         )
       })}
 
-      <button onClick={() => onAdd?.('breadboard')} className="btn-secondary" style={{ position: 'absolute', right: 12, top: 12 }}>
+      <select
+        value={addType}
+        onChange={e => setAddType(e.target.value)}
+        className="btn-secondary"
+        style={{ position: 'absolute', right: 132, top: 12 }}
+        aria-label="Add component type"
+      >
+        {Object.entries(COMPONENTS).map(([k, v]) => (
+          <option key={k} value={k}>{v.label}</option>
+        ))}
+      </select>
+      <button onClick={() => onAdd?.(addType)} className="btn-secondary" style={{ position: 'absolute', right: 12, top: 12 }}>
         + Add component
       </button>
       {layout.components.length === 0 && (

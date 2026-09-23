@@ -1300,6 +1300,8 @@ const pos = (id) => { const c = layout.components.find(x => x.id === id); return
 ```
 Use that for each wire's `from`/`to` in the `<line>`.
 
+NOTE (fixed in review — see ledger): the Add button must offer a type picker over the `COMPONENTS` registry (spec §3.3 manual fallback corrects scan misses for ANY component, not just breadboard). A `<select>` next to the button holds the current pick; `onAdd?.(addType)`. The dead `onWire` prop and `wireFrom`/`setWireFrom` state were removed by that same ruling (no wire-drawing gesture; addWire stays model/rendering-ready).
+
 - [ ] **Step 5: Build the frontend to verify it compiles**
 
 Run: `cd frontend; npm run build`

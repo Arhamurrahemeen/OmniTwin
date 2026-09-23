@@ -22,6 +22,7 @@ export class SerialSession {
   }
 
   async open() {
+    await this.port.open({ baudRate: this.baudRate })
     this.reader = this.port.readable.getReader()
     this.writer = this.port.writable.getWriter()
     this._pump()

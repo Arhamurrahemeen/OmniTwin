@@ -217,7 +217,7 @@ static void reply_scan(void)
     int n = 0;
     for (int addr = 0x03; addr <= 0x77; addr++) {
         if (i2c_master_probe(bus, addr, 100) == ESP_OK) {
-            const char *name = (addr == MPU_ADDR) ? "mpu6050" : "null";
+            const char *name = (addr == MPU_ADDR) ? "\"mpu6050\"" : "null";
             n += snprintf(list + n, sizeof list - n, "%s{\"addr\":%d,\"name\":%s}",
                           (n > 0) ? "," : "", addr, name);
             if (n >= (int)sizeof list - 32) break;
