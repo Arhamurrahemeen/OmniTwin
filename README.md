@@ -39,6 +39,8 @@ Spawns the backend and the dashboard:
 
 Plug in the ESP32, click **Connect your ESP32**, pick its COM port, and the twin canvas fills in from the board's scan. Note the venv python path is hardcoded in `run.ps1` — create it first (see Setup).
 
+The board works even with sensors unplugged: IDENT/PING/SCAN answer and the stream degrades to DHT-only rows (accel `null`) when the MPU is absent. The full 2D twin and anomaly flags need the kit attached. SCAN can take ~12 s on an empty bus — wait for the status to reach `streaming`.
+
 ## Tests
 
 ```powershell

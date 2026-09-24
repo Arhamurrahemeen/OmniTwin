@@ -45,7 +45,7 @@ Inputs the spec implies but no task's happy-path exercises; each line is pinned 
 - Produces (wire contract, all `\n`-terminated JSON on UART0):
   - request `IDENT` → `{"device":"ESP32","fw":"1.0","board":"twinlab-node","id":"TL-A1B2C3"}`
   - request `SCAN` → `{"i2c":[{"addr":104,"name":"mpu6050"}],"dht22":{"gpio":4,"ok":true}}` — unknown addresses as `{"addr":X,"name":null}`
-  - request `STREAM on` → replies `{"stream":"on"}` then ~10 Hz lines `{"ts":1734,"temp":24.3,"hum":55.1,"ax":0.1,"ay":-0.2,"az":9.8}`
+  - request `STREAM on` → replies `{"stream":"on"}` then ~10 Hz lines `{"ts":1734,"temp":24.3,"hum":55.1,"ax":0.1,"ay":-0.2,"az":9.8}`; when the MPU is absent but DHT is live the accel fields are `null` (`{"ts":...,"temp":24.3,"hum":55.1,"ax":null,"ay":null,"az":null}`)
   - request `STREAM off` → replies `{"stream":"off"}` and stops
   - request `PING` → `{"pong":true}`
 
@@ -479,6 +479,8 @@ void app_main(void)
 ```
 
 NOTE: this references `bus` (i2c master bus handle) in `reply_scan` and `app_main` but it must be a file-scope `static i2c_master_bus_handle_t bus;` (the original declared it inside `app_main`). Declare it at file scope alongside `mpu`. Also `struct timeval`/`gettimeofday` need `#include <sys/time.h>`.
+
+NOTE (fixed after live-hardware run — see ledger): the MPU probe must NOT block before the tasks start. The shipped `app_main` creates the bus, then spawns `uart_task`/`dht_task`/`stream_task` FIRST, then probes MPU non-blocking (log + `return` when absent). This is required by §3.1/§4 graceful degradation: a board with no device at 0x68 (or with the MPU unplugged) must still serve IDENT/PING/SCAN and stream DHT-only rows (`ax/ay/az:null`) — the empty-bus SCAN sweep takes ~12s, so the frontend calls `session.command('SCAN', 20000)`. `stream_task` reads MPU only when `g_mpu_ready` is set (set after `i2c_master_bus_add_device(...&mpu)`).
 
 - [ ] **Step 4: Build it**
 
@@ -1055,6 +1057,7 @@ export class SerialSession {
   }
 
   async open() {
+    await this.port.open({ baudRate: this.baudRate })   // Web Serial: readable/writable are null until open() resolves
     this.reader = this.port.readable.getReader()
     this.writer = this.port.writable.getWriter()
     this._pump()
@@ -1484,7 +1487,7 @@ export default function App() {
       await session.command('PING')
 
       setStatus('scanning')
-      const scanRes = await session.command('SCAN')
+      const scanRes = await session.command('SCAN', 20000)   // full I2C sweep takes ~12s on an empty bus
       const detected = scanToComponents(scanRes)
       setLayout(prev => mergeLayout(prev, detected))
 
