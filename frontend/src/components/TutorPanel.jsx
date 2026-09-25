@@ -2,9 +2,9 @@
    NEVER auto-fires — the LLM is only hit when a human asks. */
 import { useState } from 'react'
 
-export default function TutorPanel({ onSubmit, replyState }) {
+export default function TutorPanel({ onSubmit, replyState, initialThread = [] }) {
   const [input, setInput] = useState('')
-  const [thread, setThread] = useState([])
+  const [thread, setThread] = useState(() => initialThread)
 
   const ask = async (question) => {
     if (!question.trim()) return

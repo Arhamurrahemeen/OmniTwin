@@ -5,9 +5,13 @@ import { useState } from 'react'
 import ComponentSprite from './ComponentSprite'
 import { COMPONENTS } from '../serial/serialModel.mjs'
 
-export default function TwinCanvas({ layout, live = {}, flags = [], onMove, onAdd }) {
+export default function TwinCanvas({ layout, live = {}, flags = [], onMove, onAdd, scanInfo = null }) {
   const [dragging, setDragging] = useState(null)
   const [addType, setAddType] = useState('breadboard')
+
+  // Which readings belong to which component — a sensor's values render only on
+  // its own sprite, not on every ESP/breadboard duplicate.
+  const READING_OWNER = { dht22: ['temp', 'hum'], mpu6050: ['ax', 'ay', 'az'] }
 
   const onPointerDown = (c) => (e) => {
     e.stopPropagation()
@@ -42,11 +46,9 @@ export default function TwinCanvas({ layout, live = {}, flags = [], onMove, onAd
           <div style={{ fontSize: 10, fontFamily: 'JetBrains Mono', color: 'var(--ot-ink)', textAlign: 'center' }}>
             {COMPONENTS[c.type]?.label ?? c.type}
           </div>
-          {Object.entries(live)
-            .filter(([k]) => k === 'temp' || k === 'hum' || k === 'ax' || k === 'ay' || k === 'az')
-            .map(([k, v]) => (
+          {READING_OWNER[c.type]?.map(k => live[k] != null && (
               <div key={k} style={{ fontSize: 9, color: 'var(--ot-green)' }}>
-                {k}: {typeof v === 'number' ? v.toFixed(1) : '--'}
+                {k}: {typeof live[k] === 'number' ? live[k].toFixed(1) : '--'}
               </div>
             ))}
           {flags.length > 0 && <div style={{ color: 'var(--ot-orange)', fontSize: 9 }}>⚠ anomaly</div>}
@@ -80,6 +82,9 @@ export default function TwinCanvas({ layout, live = {}, flags = [], onMove, onAd
       <button onClick={() => onAdd?.(addType)} className="btn-secondary" style={{ position: 'absolute', right: 12, top: 12 }}>
         + Add component
       </button>
+      {scanInfo && (
+        <p className="scan-status" style={{ position: 'absolute', left: 12, bottom: 12, fontSize: 11 }}>{scanInfo}</p>
+      )}
       {layout.components.length === 0 && (
         <p className="empty-state" style={{ marginTop: 40 }}>Auto-detected components will appear here. Add them manually if the scan missed any.</p>
       )}

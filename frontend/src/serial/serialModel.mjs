@@ -8,7 +8,7 @@ export const COMPONENTS = {
   dht22:      { label: 'DHT22' },
 }
 
-const I2C_MAP = { 104: 'mpu6050' }   // 0x68
+const I2C_MAP = { 104: 'mpu6050', 105: 'mpu6050' }   // 0x68 / 0x69 (AD0 high)
 const SENSOR_RANGES = { temp: { max: 40 }, humidity: { min: 20, max: 90 }, vib: { max: 0.2 } }
 // Display labels for anomaly messages (readings keys are short wire names).
 const LABELS = { temp: 'temperature' }
@@ -45,14 +45,23 @@ export function parseScan(line) {
 }
 
 export function scanToComponents(scan) {
-  const comps = []
+  const comps = [{ type: 'esp32' }, { type: 'breadboard' }]  // board answered IDENT, so these are always present
   for (const { addr, name } of scan.i2c ?? []) {
     const type = name === null ? null : I2C_MAP[addr] ?? name
     if (type && COMPONENTS[type]) comps.push({ type })
   }
   if (scan.dht22?.ok) comps.push({ type: 'dht22' })
-  // ESP32 + breadboard are always placed by the canvas shell.
   return comps
+}
+
+const SENSOR_LABELS = { esp32: 'ESP32', breadboard: 'Breadboard' }
+
+export function scanNotice(scan) {
+  const sensors = scanToComponents(scan)
+    .filter(c => !(c.type in SENSOR_LABELS))
+    .map(c => COMPONENTS[c.type].label)
+  if (sensors.length) return `SCAN: ESP32 + ${sensors.join(', ')}`
+  return 'SCAN: ESP32 only — no sensors found (check 3V3/GND to each sensor)'
 }
 
 const DEFAULT_POS = {

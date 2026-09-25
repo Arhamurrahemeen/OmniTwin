@@ -8,6 +8,7 @@
  *   STREAM on  -> {"stream":"on"}  then ~10 Hz  {"ts","temp","hum","ax","ay","az"}
  *   STREAM off -> {"stream":"off"} (stops the stream)
  *   PING       -> {"pong":true}
+ *   DIAG       -> {"bus":{...},"probe":{...},"mpu":{"ready",addr,"read_ok"}}
  *
  * Sensor-reading code (I2C bus setup, MPU register config, the DHT22 bit-bang
  * decoder) is carried over verbatim from the bench-tested standalone firmware.
@@ -32,7 +33,8 @@
 
 #define SDA_IO   21
 #define SCL_IO   22
-#define MPU_ADDR 0x68
+#define MPU_ADDR     0x68   /* AD0 low */
+#define MPU_ADDR_ALT 0x69   /* AD0 high (some modules float it up) */
 
 /* DHT22 data pin. Needs a 4.7k-10k pull-up to 3V3 on the line; the internal
    pull-up is enabled too but is too weak to rely on alone. */
@@ -56,10 +58,13 @@ static char g_device_id[DEVICE_ID_MAXLEN + 1];
 static float g_temp = NAN, g_hum = NAN;  /* last good DHT reading; NAN until first */
 static volatile bool g_stream_on = false;
 static volatile bool g_mpu_ready = false;   /* set once MPU found+configured */
+static volatile bool g_mpu_r_ok = false;    /* last stream read result (DIAG visibility) */
+static uint8_t g_mpu_addr = 0;              /* 0x68 or 0x69 once found */
+static bool g_sda_up = false, g_scl_up = false;  /* pull-up snapshot at boot */
 
 /* ---- protocol types + helpers (Task 1 selftests reference these) ---------- */
 
-typedef enum { CMD_IDENT, CMD_SCAN, CMD_STREAM_ON, CMD_STREAM_OFF, CMD_PING, CMD_NONE } cmd_t;
+typedef enum { CMD_IDENT, CMD_SCAN, CMD_STREAM_ON, CMD_STREAM_OFF, CMD_PING, CMD_DIAG, CMD_NONE } cmd_t;
 
 static cmd_t parse_cmd(const char *line)   /* see proto_selftest */
 {
@@ -68,6 +73,7 @@ static cmd_t parse_cmd(const char *line)   /* see proto_selftest */
     else if (strcmp(line, "STREAM on") == 0) return CMD_STREAM_ON;
     else if (strcmp(line, "STREAM off") == 0)return CMD_STREAM_OFF;
     else if (strcmp(line, "PING") == 0)      return CMD_PING;
+    else if (strcmp(line, "DIAG") == 0)      return CMD_DIAG;
     return CMD_NONE;
 }
 
@@ -77,6 +83,7 @@ static void proto_selftest(void)
     assert(parse_cmd("STREAM on") == CMD_STREAM_ON);
     assert(parse_cmd("STREAM off") == CMD_STREAM_OFF);
     assert(parse_cmd("PING") == CMD_PING);
+    assert(parse_cmd("DIAG") == CMD_DIAG);
     assert(parse_cmd("bogus\ntrailing") == CMD_NONE);
     assert(parse_cmd("") == CMD_NONE);
     assert(parse_cmd(" STREAM on") == CMD_NONE);
@@ -101,12 +108,51 @@ static esp_err_t mpu_r(uint8_t reg, uint8_t *buf, size_t n)
     return i2c_master_transmit_receive(mpu, &reg, 1, buf, n, 100);
 }
 
-static void mpu_w_retry(uint8_t reg, uint8_t val)
+/* Find + configure the MPU6050. Returns true once it's streaming. Safe to call
+   repeatedly (no-op once ready): the sensor ACKs a probe before its register
+   writes are accepted — an MPU6050 ignores writes for ~100ms after power-on
+   (boot, or a rail brown-out), so init may miss at boot and succeed later.
+   A readback gate (not just ACK) is what makes "configured" honest. */
+static void mpu_init_regs(void)
 {
-    while (mpu_w(reg, val) != ESP_OK) {
-        ESP_LOGW(TAG, "mpu init write 0x%02X=0x%02X failed, retrying", reg, val);
-        vTaskDelay(pdMS_TO_TICKS(50));
+    mpu_w(0x6B, 0x01);   /* wake, PLL with X gyro reference */
+    mpu_w(0x1A, 0x03);   /* CONFIG: DLPF 44Hz */
+    mpu_w(0x19, 0x00);   /* SMPLRT_DIV: 1kHz */
+    mpu_w(0x1B, 0x08);   /* GYRO_CONFIG: +-500 dps */
+    mpu_w(0x1C, 0x10);   /* ACCEL_CONFIG: +-8g  (ACC_LSB=4096 assumes this) */
+}
+
+static bool mpu_try_init(void)
+{
+    if (g_mpu_ready) return true;
+
+    uint8_t addr = 0;
+    if (i2c_master_probe(bus, MPU_ADDR, 100) == ESP_OK)      addr = MPU_ADDR;
+    else if (i2c_master_probe(bus, MPU_ADDR_ALT, 100) == ESP_OK) addr = MPU_ADDR_ALT;
+    if (!addr) return false;
+
+    i2c_device_config_t dev_cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address  = addr,
+        .scl_speed_hz    = 100000,   /* 100kHz tolerates marginal breadboard wiring far better than 400kHz */
+    };
+    if (i2c_master_bus_add_device(bus, &dev_cfg, &mpu) != ESP_OK) return false;
+
+    for (int i = 0; i < 10; i++) {
+        mpu_init_regs();
+        uint8_t pwr = 0, acc = 0;
+        if (mpu_r(0x6B, &pwr, 1) == ESP_OK && pwr == 0x01 &&
+            mpu_r(0x1C, &acc, 1) == ESP_OK && acc == 0x10) {
+            g_mpu_addr = addr;
+            g_mpu_ready = true;
+            ESP_LOGI(TAG, "MPU6050 found + configured at 0x%02X", addr);
+            return true;
+        }
+        vTaskDelay(pdMS_TO_TICKS(200));   /* wait out the chip's power-on write-lockout */
     }
+
+    ESP_LOGE(TAG, "MPU at 0x%02X found but config never took (chip in startup lockout?)", addr);
+    return false;
 }
 
 static bool line_pulled_up(int pin)
@@ -213,21 +259,53 @@ static void reply_ident(void)
 
 static void reply_scan(void)
 {
-    /* I2C 7-bit sweep 0x03..0x77; 0x68 -> mpu6050, anything else -> null name. */
-    char list[512];
+    /* I2C 7-bit sweep 0x03..0x77; 0x68/0x69 -> mpu6050, anything else -> null name.
+       Short probe timeout so a dead/clamped bus returns in ~1s instead of 12s. */
+    char list[512] = "";
     int n = 0;
     for (int addr = 0x03; addr <= 0x77; addr++) {
-        if (i2c_master_probe(bus, addr, 100) == ESP_OK) {
-            const char *name = (addr == MPU_ADDR) ? "\"mpu6050\"" : "null";
+        /* 100ms probe on the MPU addresses (a flaky MPU ACKs slowly), 25ms elsewhere. */
+        int timeout = (addr == MPU_ADDR || addr == MPU_ADDR_ALT) ? 100 : 25;
+        if (i2c_master_probe(bus, addr, timeout) == ESP_OK) {
+            const char *name = (addr == MPU_ADDR || addr == MPU_ADDR_ALT) ? "\"mpu6050\"" : "null";
             n += snprintf(list + n, sizeof list - n, "%s{\"addr\":%d,\"name\":%s}",
                           (n > 0) ? "," : "", addr, name);
             if (n >= (int)sizeof list - 32) break;
         }
     }
-    float t, h;
-    bool dht_ok = dht_read(&t, &h);
-    printf("{\"i2c\":[%s],\"dht22\":{\"gpio\":%d,\"ok\":%s}}\n",
-           list, DHT_IO, dht_ok ? "true" : "false");
+    bool dht_ok = !isnan(g_temp);   /* last-known-good sample from dht_task; don't bit-bang here */
+    printf("{\"i2c\":[%s],\"dht22\":{\"gpio\":%d,\"ok\":%s},\"bus\":{\"sda_up\":%s,\"scl_up\":%s}}\n",
+           list, DHT_IO, dht_ok ? "true" : "false",
+           g_sda_up ? "true" : "false", g_scl_up ? "true" : "false");
+}
+
+/* Hardware visibility without printing logs on the wire (which would corrupt the
+   JSON protocol). Answers "why is the MPU not streaming": pull-up state, whether
+   it ACKs at each address, the last stream read result, and register readbacks
+   (WHO_AM_I = chip identity, PWR_MGMT_1 = 0x00 would mean still asleep —
+   I2C ACK does not mean the chip is actually converting data). */
+static void reply_diag(void)
+{
+    bool p68 = i2c_master_probe(bus, MPU_ADDR, 100) == ESP_OK;
+    bool p69 = i2c_master_probe(bus, MPU_ADDR_ALT, 100) == ESP_OK;
+    int whoami = -1, pwr = -1, pwr_after = -1, cfg = -1, accel_cfg = -1, ax_raw = 0;
+    if (g_mpu_ready) {
+        uint8_t v;
+        if (mpu_r(0x75, &v, 1) == ESP_OK) whoami = v;
+        if (mpu_r(0x6B, &v, 1) == ESP_OK) pwr = v;
+        mpu_w(0x6B, 0x01);                       /* force fresh wake write */
+        if (mpu_r(0x6B, &v, 1) == ESP_OK) pwr_after = v;
+        if (mpu_r(0x1A, &v, 1) == ESP_OK) cfg = v;
+        if (mpu_r(0x1C, &v, 1) == ESP_OK) accel_cfg = v;
+        uint8_t d[2];
+        if (mpu_r(0x3B, d, 2) == ESP_OK) ax_raw = (int16_t)((d[0] << 8) | d[1]);
+    }
+    printf("{\"bus\":{\"sda_up\":%s,\"scl_up\":%s},\"probe\":{\"0x68\":%s,\"0x69\":%s},\"mpu\":{\"ready\":%s,\"addr\":%d,\"read_ok\":%s,\"whoami\":%d,\"pwr_mgmt1\":%d,\"pwr_after_wake\":%d,\"cfg\":%d,\"accel_cfg\":%d,\"ax_raw\":%d}}\n",
+           g_sda_up ? "true" : "false", g_scl_up ? "true" : "false",
+           p68 ? "true" : "false", p69 ? "true" : "false",
+           g_mpu_ready ? "true" : "false", g_mpu_addr,
+           g_mpu_r_ok ? "true" : "false",
+           whoami, pwr, pwr_after, cfg, accel_cfg, ax_raw);
 }
 
 static void handle_cmd(cmd_t cmd)
@@ -238,6 +316,7 @@ static void handle_cmd(cmd_t cmd)
         case CMD_STREAM_ON:  g_stream_on = true;  printf("{\"stream\":\"on\"}\n");  break;
         case CMD_STREAM_OFF: g_stream_on = false; printf("{\"stream\":\"off\"}\n"); break;
         case CMD_PING:       printf("{\"pong\":true}\n"); break;
+        case CMD_DIAG:       reply_diag();    break;
         default:             printf("{\"error\":\"unknown command\"}\n"); break;
     }
 }
@@ -277,10 +356,16 @@ static long long epoch_ms(void)
 
 static void stream_task(void *arg)
 {
+    int64_t last_mpu_try = 0;
     while (1) {
+        uint8_t d[14];
+        bool mpu_ok = g_mpu_ready && mpu_r(0x3B, d, 14) == ESP_OK;
+        g_mpu_r_ok = mpu_ok;
+        if (!mpu_ok && esp_timer_get_time() - last_mpu_try > 1000000) {
+            last_mpu_try = esp_timer_get_time();
+            mpu_try_init();   /* boot retry AND self-heal on flaky-wire drops */
+        }
         if (g_stream_on) {
-            uint8_t d[14];
-            bool mpu_ok = g_mpu_ready && mpu_r(0x3B, d, 14) == ESP_OK;
             if (mpu_ok) {
                 float ax = (int16_t)((d[0] << 8) | d[1]) / ACC_LSB;
                 float ay = (int16_t)((d[2] << 8) | d[3]) / ACC_LSB;
@@ -332,6 +417,8 @@ void app_main(void)
 
     bool sda_up = line_pulled_up(SDA_IO);
     bool scl_up = line_pulled_up(SCL_IO);
+    g_sda_up = sda_up;   /* snapshot for SCAN/DIAG replies (logs get silenced below) */
+    g_scl_up = scl_up;
     ESP_LOGI(TAG, "bus check: SDA(%d)=%s SCL(%d)=%s", SDA_IO,
              sda_up ? "pulled up" : "FLOATING", SCL_IO,
              scl_up ? "pulled up" : "FLOATING");
@@ -351,33 +438,20 @@ void app_main(void)
     };
     ESP_ERROR_CHECK(i2c_new_master_bus(&bus_cfg, &bus));
 
+    /* This UART0 is the Web Serial protocol channel — it must carry only JSON.
+       Any ESP log (DHT failures, I2C timeouts, MPU retries) can interleave
+       mid-printf and corrupt the line the browser parses. Silence everything;
+       state is conveyed via the JSON itself (temp:null, ok:false, ax:null). */
+    esp_log_level_set("*", ESP_LOG_NONE);
+
     xTaskCreatePinnedToCore(uart_task,   "uart"  , 4096, NULL, 8, NULL, 0);
     xTaskCreatePinnedToCore(dht_task,    "dht"   , 3072, NULL, 5, NULL, 1);
     xTaskCreatePinnedToCore(stream_task, "stream", 3072, NULL, 5, NULL, 1);
 
     /* MPU init is non-blocking: with no device at 0x68 the board still serves
-       IDENT/SCAN/PING and streams DHT readings (spec §4 graceful degradation). */
-    esp_err_t err = i2c_master_probe(bus, MPU_ADDR, 200);
-    if (err != ESP_OK) {
-        ESP_LOGE(TAG, "no device at 0x%02X (%s) - check SDA=%d, SCL=%d, 3V3, GND",
-                 MPU_ADDR, esp_err_to_name(err), SDA_IO, SCL_IO);
-        return;   /* uart/dht/stream already running — IDENT/PING/SCAN/DHT work */
-    }
-    ESP_LOGI(TAG, "device found at 0x%02X", MPU_ADDR);
-
-    i2c_device_config_t dev_cfg = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address  = MPU_ADDR,
-        .scl_speed_hz    = 400000,
-    };
-    ESP_ERROR_CHECK(i2c_master_bus_add_device(bus, &dev_cfg, &mpu));
-    g_mpu_ready = true;
-
-    mpu_w_retry(0x6B, 0x01);
-    mpu_w_retry(0x1A, 0x03);
-    mpu_w_retry(0x19, 0x00);
-    mpu_w_retry(0x1B, 0x08);
-    mpu_w_retry(0x1C, 0x10);
+       IDENT/SCAN/PING and streams DHT readings (spec §4 graceful degradation).
+       The stream task keeps retrying (rate-limited) until the sensor appears. */
+    mpu_try_init();
 
     ESP_LOGI(TAG, "OmniTwin USB node ready — IDENT/SCAN/STREAM/PING on UART0");
 }

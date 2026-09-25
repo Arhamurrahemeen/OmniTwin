@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert'
 import {
   readLine, parseScan, scanToComponents, defaultLayout,
-  addComponent, moveComponent, addWire, anomalyFlags, withTimeout,
+  addComponent, moveComponent, addWire, anomalyFlags, withTimeout, scanNotice,
 } from '../src/serial/serialModel.mjs'
 
 test('readLine reassembles a line split across chunks', () => {
@@ -29,13 +29,43 @@ test('parseScan extracts i2c list and dht probe', () => {
   assert.ok(s.dht22.ok)
 })
 
-test('scanToComponents maps known addresses + ok dht, skips unknowns', () => {
+test('scanToComponents maps known addresses + ok dht + always ESP/breadboard', () => {
   const s = parseScan('{"i2c":[{"addr":104,"name":"mpu6050"},{"addr":72,"name":null}],"dht22":{"gpio":4,"ok":true}}')
   const comps = scanToComponents(s)
   const types = comps.map(c => c.type)
+  assert.ok(types.includes('esp32'))
+  assert.ok(types.includes('breadboard'))
   assert.ok(types.includes('mpu6050'))
   assert.ok(types.includes('dht22'))
-  assert.ok(!types.includes('breadboard'))  // breadboard added separately by canvas
+})
+
+test('scanToComponents on an empty bus still yields ESP + breadboard', () => {
+  const s = parseScan('{"i2c":[],"dht22":{"gpio":4,"ok":false}}')
+  const types = scanToComponents(s).map(c => c.type)
+  assert.deepEqual([...types].sort(), ['breadboard', 'esp32'])
+})
+
+test('scanToComponents maps an MPU at 0x69 (105) too', () => {
+  const s = parseScan('{"i2c":[{"addr":105,"name":"mpu6050"}],"dht22":{"gpio":4,"ok":false}}')
+  const types = scanToComponents(s).map(c => c.type)
+  assert.ok(types.includes('mpu6050'))
+})
+
+test('scanToComponents tolerates the bus{} block in the SCAN reply', () => {
+  const s = parseScan('{"i2c":[{"addr":104,"name":"mpu6050"}],"dht22":{"gpio":4,"ok":true},"bus":{"sda_up":true,"scl_up":true}}')
+  const types = scanToComponents(s).map(c => c.type)
+  assert.ok(types.includes('mpu6050'))
+  assert.ok(types.includes('dht22'))
+})
+
+test('scanNotice reports found components', () => {
+  const s = parseScan('{"i2c":[{"addr":104,"name":"mpu6050"},{"addr":72,"name":null}],"dht22":{"gpio":4,"ok":true}}')
+  assert.equal(scanNotice(s), 'SCAN: ESP32 + MPU6050, DHT22')
+})
+
+test('scanNotice flags an empty bus for wiring/power check', () => {
+  const s = parseScan('{"i2c":[{"addr":104,"name":null}],"dht22":{"gpio":4,"ok":false}}')
+  assert.equal(scanNotice(s), 'SCAN: ESP32 only — no sensors found (check 3V3/GND to each sensor)')
 })
 
 test('defaultLayout places each component uniquely and stores x/y', () => {

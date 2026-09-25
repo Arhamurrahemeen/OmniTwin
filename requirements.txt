@@ -4,5 +4,6 @@ motor
 pydantic-settings
 httpx
 numpy
+python-pptx
 pytest
 python-multipart
