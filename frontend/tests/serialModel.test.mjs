@@ -29,6 +29,13 @@ test('parseScan extracts i2c list and dht probe', () => {
   assert.ok(s.dht22.ok)
 })
 
+test('parseScan accepts an already-parsed reply as well as a raw line', () => {
+  // Both session types resolve a command with a parsed object, not a string.
+  // Feeding that object to JSON.parse yields "[object Object]" and throws.
+  const obj = { i2c: [{ addr: 104 }], dht22: { gpio: 4, ok: true } }
+  assert.deepEqual(parseScan(obj), obj)
+})
+
 test('scanToComponents maps known addresses + ok dht + always ESP/breadboard', () => {
   const s = parseScan('{"i2c":[{"addr":104,"name":"mpu6050"},{"addr":72,"name":null}],"dht22":{"gpio":4,"ok":true}}')
   const comps = scanToComponents(s)

@@ -4,15 +4,20 @@ import TwinCanvas from './components/TwinCanvas'
 import TutorPanel from './components/TutorPanel'
 import { supportsSerial, requestPort, SerialSession } from './serial/serialBridge'
 import { DemoSession } from './serial/demoSession.mjs'
+import ADAPTER from './serial/adapters/twinlab_esp32_v1'
 import {
-  defaultLayout, scanToComponents, scanNotice, addComponent, moveComponent,
-  anomalyFlags,
+  defaultLayout, parseScan, detectAdapter, detectComponents, scanNotice,
+  addComponent, moveComponent, anomalyFlags,
 } from './serial/serialModel.mjs'
 import { askTutor } from './api'
 import wordmark from './assets/wordmark.png'
 import './App.css'
 
 const CTX_DEVICE_ID = 'local'
+
+// The adapter whose IDENT answered. Module-level rather than state: onData fires
+// ~10x/sec and must not re-render the tree to reach it.
+let activeAdapter = ADAPTER
 
 // ponytail: ?demo=1 replaces the board with a fake session — offline demo + deck screenshots. ?tutor=1 pre-seeds a Q&A for the tutor shot.
 const isDemo = () => new URLSearchParams(window.location.search).has('demo')
@@ -28,13 +33,14 @@ const mergeLayout = (prev, comps) => {
 }
 
 export default function App() {
-  const [status, setStatus] = useState('needPort') // needPort|connecting|scanning|streaming|error
+  const [status, setStatus] = useState('needPort') // needPort|connecting|scanning|streaming|manual|error
   const [layout, setLayout] = useState(() => defaultLayout([]))
   const [live, setLive] = useState({})
   const [flags, setFlags] = useState([])
   const [device, setDevice] = useState(null)   // { id, board, fw }
   const [tutor, setTutor] = useState(null)     // { messages, reply, error, sessionId }
   const [scanInfo, setScanInfo] = useState(null) // result of the last SCAN, shown on the canvas
+  const [noFirmware, setNoFirmware] = useState(false)
   const sessionRef = useRef(null)
 
   const context = () => ({
@@ -54,14 +60,14 @@ export default function App() {
     try {
       await closeSession()
       setStatus('connecting')
+      setNoFirmware(false)
       const port = isDemo() ? null : await requestPort()
       const session = new (isDemo() ? DemoSession : SerialSession)({
         port,
+        baudRate: ADAPTER.baudRate,
         onData: (obj) => {
-          if (obj && typeof obj.ts === 'number') {
-            const hasAccel = typeof obj.ax === 'number'
-            const vib = hasAccel ? Math.abs(Math.hypot(obj.ax, obj.ay, obj.az) - 1) : null
-            const clean = { temp: obj.temp, hum: obj.hum, vib, ax: hasAccel ? obj.ax : null, ay: hasAccel ? obj.ay : null, az: hasAccel ? obj.az : null }
+          if (activeAdapter.isReading(obj)) {
+            const clean = activeAdapter.toReading(obj)
             setLive(clean)
             setFlags(anomalyFlags(clean))
           }
@@ -71,17 +77,37 @@ export default function App() {
       sessionRef.current = session
       await session.open()
 
-      const idRes = await session.command('IDENT')
-      setDevice({ id: idRes.id, board: idRes.board, fw: idRes.fw })
-      await session.command('PING')
+      // Probe each adapter's IDENT dialect over the one open port. The port is
+      // opened once at the first adapter's baud — Web Serial bakes baudRate in
+      // at open() and has no setBaudRate, so per-adapter baud would mean a
+      // close/reopen cycle. Every serial board is 115200.
+      const found = await detectAdapter(session, [ADAPTER])
+      if (!found) {
+        // Spec 3.1 step 4: no board-profile picker. The canvas with "+ Add
+        // component" already IS the manual path, so drop into it rather than
+        // hard-erroring — the student may have their own sketch on the port.
+        setStatus('manual')
+        setNoFirmware(true)
+        setScanInfo('No OmniTwin firmware answered on this port — build the rig by hand.')
+        setLayout(defaultLayout([]))
+        return
+      }
+      const adapter = found.adapter
+      activeAdapter = adapter
+      setDevice(found.info)
 
       setStatus('scanning')
-      const scanRes = await session.command('SCAN', 20000)   // full I2C sweep can take ~12s on an empty bus
-      const detected = scanToComponents(scanRes)
-      setScanInfo(scanNotice(scanRes))
+      const scan = parseScan(await session.command(adapter.scanCommand, adapter.scanTimeoutMs))
+      // Ask the board to read each identifiable address's WHOAMI register, so
+      // identity comes off the chip rather than off the address.
+      const askWhoami = (addr, reg) =>
+        session.command(adapter.identityCommand(addr, reg), adapter.identityTimeoutMs)
+          .then(adapter.parseIdentity)
+      const detected = await detectComponents(scan, askWhoami)
+      setScanInfo(scanNotice(scan))
       setLayout(prev => mergeLayout(prev, detected))
 
-      await session.command('STREAM on')
+      await session.command(adapter.streamOnCommand)
       setStatus('streaming')
       if (isTutorDemo()) {
         setTutor({
@@ -155,6 +181,12 @@ export default function App() {
                   <span className="charts-device-name">{device.id}</span>
                   <span className="charts-device-location">{device.board} · fw {device.fw}</span>
                 </div>
+              )}
+              {noFirmware && (
+                <p className="empty-state" style={{ fontSize: 11 }}>
+                  No OmniTwin firmware answered on this port. Add components by hand below, or
+                  flash the node firmware and reconnect.
+                </p>
               )}
               <TwinCanvas layout={layout} live={live} flags={flags}
                 onMove={(id, x, y) => setLayout(l => moveComponent(l, id, x, y))}

@@ -37,9 +37,11 @@ export function withTimeout(promise, ms) {
   })
 }
 
+// Sessions resolve a command with an already-parsed object, but a raw UART line
+// is also a valid input. Normalise both — JSON.parse on an object stringifies
+// it to "[object Object]" and throws.
 export function parseScan(line) {
-  const raw = JSON.parse(line)
-  return raw // {i2c:[{addr,whoami?}], dht22:{gpio,ok}}
+  return typeof line === 'string' ? JSON.parse(line) : line
 }
 
 export function scanToComponents(scan) {
@@ -90,6 +92,36 @@ export function moveComponent(layout, id, x, y) {
 
 export function addWire(layout, from, to) {
   return { ...layout, wires: [...layout.wires, { id: nid(), from, to }] }
+}
+
+// Try each board adapter's IDENT dialect in turn and take the first that
+// answers. A losing adapter never receives a SCAN or STREAM — only IDENT.
+export async function detectAdapter(session, adapters) {
+  for (const adapter of adapters) {
+    try {
+      const reply = await session.command(adapter.identCommand, adapter.identTimeoutMs ?? 2000)
+      const r = adapter.parseIdent(reply)
+      if (r.ok) return { adapter, info: r.info }
+    } catch {
+      // Wrong dialect, or nothing on this port — try the next adapter.
+    }
+  }
+  return null
+}
+
+// Resolve a SCAN reply into components, asking the board to read each
+// identifiable address's WHOAMI register first. `askWhoami` is injected so this
+// stays free of Web Serial and testable with a stub. A probe that fails leaves
+// `whoami` absent, which falls back to address resolution — so an unreflashed
+// 1.0 board still detects.
+export async function detectComponents(scan, askWhoami) {
+  const regs = new Map(whoamiRequests(scan).map(r => [r.addr, r.reg]))
+  const entries = await Promise.all((scan.i2c ?? []).map(async (e) => {
+    if (!regs.has(e.addr)) return e
+    try { return { ...e, whoami: await askWhoami(e.addr, regs.get(e.addr)) } }
+    catch { return e }
+  }))
+  return scanToComponents({ ...scan, i2c: entries })
 }
 
 // Cheap local anomaly flags — zero LLM cost. Returns array of short strings.

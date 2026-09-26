@@ -60,8 +60,15 @@ export class SerialSession {
     if (!this.writer) throw new Error('Serial session not open')
     if (this._resolver) throw new Error('Command already in flight')
     const reply = new Promise((resolve) => { this._resolver = resolve })
-    await this.writer.write(new TextEncoder().encode(cmd + '\n'))
-    return withTimeout(reply, timeoutMs)
+    try {
+      await this.writer.write(new TextEncoder().encode(cmd + '\n'))
+      return await withTimeout(reply, timeoutMs)
+    } finally {
+      // Release the slot on BOTH paths. Without this a timed-out command
+      // poisons the session and every later command throws 'Command already in
+      // flight' — which is exactly what adapter probing does on a dead port.
+      this._resolver = null
+    }
   }
 
   async close() {
