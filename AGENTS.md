@@ -189,6 +189,12 @@ Playwright MCP server is configured with `--browser msedge` and
 - Wire *drawing* now exists: click a pin, then a pin on another part, to wire
   them; click a wired pin to detach. Wires are pin-referenced, not centre-to-
   centre, and `wiringFlags()` catches kind mismatches. Still no zoom/pan/rotate.
+- The pin gesture arms and detaches on `pointerdown`, so a wire is destroyed on
+  mouse-*down* — press-and-drag off a wired pin silently deletes it, and a
+  half-armed wire can't be cancelled by re-clicking the same pin. Fix by moving
+  the state machine in `TwinCanvas.jsx` to `onClick`.
+- `scanNotice` prints `MPU6050, MPU6050` when both `0x68` and `0x69` ACK. The
+  canvas is fine (`mergeLayout` dedupes by type); only the status text is wrong.
 - `ruff check .` currently reports ~57 findings (mostly `Optional[X]` →
   `X | None` in `backend/models/device.py`). None are bugs; they are unfixed
   because they were never in scope.
