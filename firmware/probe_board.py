@@ -1,25 +1,29 @@
-"""Probe an unknown serial board and report what it is — read-only.
+"""Probe an unknown serial board and report what it is.
 
-Exists because "what is this board?" is a question we could not answer, and the
-answer determines which adapter OmniTwin needs. Written to be READ-ONLY and
-INERT: it never writes a command, it only listens, because a wrong write on a
-flight controller can spin a motor (see the spec's safety rule).
+Two PHASES, and the distinction is the whole point:
 
-Identification is by what the board volunteers, in order:
+  PASS 1 (passive)  -- listen only. Sends NOTHING. Identifies any board that
+                       speaks unsolicited: our own firmware, MAVLink (heartbeat
+                       every second), CRSF, NMEA.
+  PASS 2 (greeting)-- only if pass 1 was silent, send the documented READ-ONLY
+                       greeting for the protocols that are request/response.
+                       Today that is MSP_IDENT on Betaflight/INAV/Cleanflight.
 
-  1. silent            - answers nothing; the port opens but no protocol
-  2. omnitwin          - our own firmware: ASCII JSON lines starting with '{'
-  3. mavlink           - 0xFE preamble, little-endian length, ASCII payload
-  4. msp               - 0xAA 'M' '<' length, little-endian, little-endian
-                          checksum XOR
-  5. crsf              - binary frame 0xC8 (type + CRC8), sync 0xC8
-  6. nmea              - ASCII lines starting with '$' and ending in CRLF
+Why pass 2 exists: **MSP is request/response. A healthy flight controller says
+absolutely nothing until it is asked.** An earlier version of this tool treated
+a silent port as a fault and then ran `esptool` against an STM32F3 -- an ESP32
+tool that could never have worked. Both errors came from assuming boards
+volunteer their identity. They do not.
 
-MSP is checked BEFORE the generic "talk and see" step: a lone 0xAA byte could
-also be boot chatter, so we require the 3-byte header to repeat.
+SAFETY. Pass 2 sends ONLY MSP_IDENT (command 1), which returns a version and
+configures nothing. The spec's rule is "a client adapter may send documented read
+commands; it must contain zero WRITE commands" -- because on a flight controller
+a wrong write spins a motor, not just logs a bad reading. The ban is on
+MSP_SET_*/MSP_DO_*/flash, not on all traffic. Use --no-greet to stay silent.
 
 Usage:
-    python probe_board.py <COMx>          # e.g. COM3
+    python probe_board.py COM3              # passive, then greet if silent
+    python probe_board.py COM3 --no-greet   # passive only, writes nothing
     python probe_board.py --list
 """
 
@@ -98,21 +102,121 @@ def hexdump(chunk: bytes, limit: int = 48) -> str:
 
 
 def classify(buf: bytes) -> tuple[str, str]:
-    """Return (family, confidence) without ever writing to the board."""
+    """Return (family, why) from passively observed bytes."""
     if not buf:
-        return "silent", "port opened, nothing arrived"
+        return "silent", "nothing arrived unsolicited"
 
     if looks_like_omnitwin(buf):
         return "omnitwin", "ASCII JSON -- this is OmniTwin firmware"
     if looks_like_mavlink(buf):
         return "mavlink", "0xFE preamble repeated -- ArduPilot / PX4 / INAV"
     if looks_like_msp(buf):
-        return "msp", "0xAA 'M'/< header repeated -- Betaflight / INAV / Multistab"
+        return "msp", "0xAA 'M'/< header repeated"
     if looks_like_crsf(buf):
         return "crsf", "crossfire sync frames -- an ELRS/CRSF radio, not a flight controller"
     if looks_like_nmea(buf):
         return "nmea", "ASCII $G/$P sentences -- a GPS module"
     return "unknown", "bytes arrived but match no known framing"
+
+
+# ------------------------------------------------------- MSP (read-only) ---
+MSP_IDENT = 1
+MSP_API_VERSION = 1
+MSP_FC_VARIANT = 2
+MSP_BOARD_INFO = 4
+MSP_BUILD_INFO = 115
+
+# READ-ONLY ONLY. MSP_SET_*/MSP_DO_* and every flash path are deliberately absent
+# from this file: on a flight controller a write can arm a motor, which is a
+# different class of consequence from a bad log line.
+MSP_READ_COMMANDS = {
+    MSP_IDENT: "MSP_IDENT",
+    MSP_API_VERSION: "MSP_API_VERSION",
+    MSP_FC_VARIANT: "MSP_FC_VARIANT",
+    MSP_BOARD_INFO: "MSP_BOARD_INFO",
+    MSP_BUILD_INFO: "MSP_BUILD_INFO",
+}
+
+
+def msp_request(cmd: int, payload: bytes = b"") -> bytes:
+    """Build an outbound MSPv1 frame.
+
+    Fixed 12 bytes on the wire, inherited from MultiWii:
+
+        $AA 'M' '<' size_lo size_hi cmd payload[5] checksum
+
+    Two details matter and both were wrong in the first version, which made a
+    healthy Betaflight board answer nothing at all:
+
+    - The size field states the REAL length (cmd + payload). The payload slot is
+      zero-padded to fixed width, but the padding is not part of the protocol.
+    - The checksum is XOR over size_lo, size_hi, cmd and exactly `size` payload
+      bytes -- NOT the padding. Betaflight's receive path sets
+      `dataSize = hdr->size` and consumes/XORs only that many payload bytes
+      (src/main/msp/msp_serial.c, MSP_HEADER_V1 -> MSP_PAYLOAD_V1).
+    """
+    if len(payload) > 5:
+        raise ValueError("MSPv1 payload is at most 5 bytes; use MSPv2 for more")
+    size = 1 + len(payload)
+    frame = bytearray([0xAA, ord("M"), ord("<"), size & 0xFF, size >> 8, cmd])
+    frame.extend(payload)
+    # Fixed 12-byte on the wire, but the size field is the REAL length. The
+    # padding exists to fill the slot and is NOT covered by the checksum:
+    # betaflight's receive path sets dataSize = hdr->size and XORs exactly that
+    # many payload bytes (msp_serial.c, MSP_HEADER_V1 -> MSP_PAYLOAD_V1).
+    frame.extend(b"\x00" * (5 - len(payload)))
+    ck = 0
+    for b in frame[3:5 + size]:
+        ck ^= b
+    frame.append(ck)
+    return bytes(frame)
+
+
+def parse_msp(buf: bytes) -> list[tuple[int, bytes]]:
+    """Pull (command, payload) out of inbound MSPv1 frames, verifying the XOR.
+
+    The size field states how many bytes are real; the rest of the 5-byte slot
+    is padding and is stripped so string replies come back clean. Scanning
+    advances one byte at a time rather than skipping past a frame, because
+    boot chatter and real frames share the stream.
+    """
+    out = []
+    for i in range(len(buf) - 5):
+        if buf[i] != 0xAA or buf[i + 1] != ord("M") or buf[i + 2] != ord(">"):
+            continue
+        size = buf[i + 3] | (buf[i + 4] << 8)
+        if not 1 <= size <= 6:
+            continue
+        end = i + 5 + size
+        if end >= len(buf):
+            continue
+        ck = 0
+        for b in buf[i + 3:end]:
+            ck ^= b
+        if ck != buf[end]:
+            continue
+        out.append((buf[i + 5], buf[i + 6:end].rstrip(b"\x00")))
+    return out
+
+
+def msp_greet(s) -> bytes:
+    """Ask the documented read-only questions. Writes only IDENT-family reads."""
+    replies = b""
+    for cmd, name in MSP_READ_COMMANDS.items():
+        s.reset_input_buffer()
+        s.write(msp_request(cmd))
+        s.flush()
+        end = time.time() + 0.6
+        while time.time() < end:
+            chunk = s.read(512)
+            if chunk:
+                replies += chunk
+                if len(replies) > 2:
+                    time.sleep(0.05)
+                    replies += s.read(512)
+                    break
+        time.sleep(0.05)
+    return replies
 
 
 def list_ports() -> int:
@@ -153,7 +257,19 @@ def open_port(port: str):
     raise last if last else RuntimeError("no candidate port name")
 
 
-def probe(port: str) -> int:
+def describe_msp(replies: bytes) -> None:
+    for cmd, payload in parse_msp(replies):
+        name = MSP_READ_COMMANDS.get(cmd, f"cmd {cmd}")
+        shown = payload[:64]
+        text = shown.decode("utf-8", "replace").rstrip("\x00")
+        printable = sum(c.isprintable() or c == "\x00" for c in text)
+        if text and printable / max(len(text), 1) > 0.85:
+            print(f"    {name:<16} -> {text!r}")
+        else:
+            print(f"    {name:<16} -> {shown.hex(' ')}")
+
+
+def probe(port: str, greet: bool = True) -> int:
     try:
         s = open_port(port)
     except Exception as exc:
@@ -167,15 +283,15 @@ def probe(port: str) -> int:
 
     # The CP210x auto-reset circuit ties DTR->EN and RTS->IO0, so merely opening
     # the port resets an ESP32. Drop both lines so we observe a running board
-    # rather than a board we just restarted.
+    # rather than one we just restarted.
     try:
         s.dtr = False
         s.rts = False
     except Exception:
         pass
 
-    print(f"opened {port} @ {BAUD} (read-only, nothing written)")
-    print(f"listening {PROBE_SECONDS:.0f}s for anything the board volunteers...\n")
+    print(f"opened {port} @ {BAUD}")
+    print(f"pass 1: listening {PROBE_SECONDS:.0f}s, sending NOTHING\n")
 
     buf = b""
     end = time.time() + PROBE_SECONDS
@@ -187,27 +303,55 @@ def probe(port: str) -> int:
             break
         if chunk:
             buf += chunk
-    s.close()
 
     print(f"received {len(buf)} bytes")
     if buf:
         print(hexdump(buf))
 
     family, why = classify(buf)
+
+    # Pass 2. A silent port is ambiguous: it can be a healthy request/response
+    # board (MSP says nothing until asked) or simply a board that is off. Greet
+    # it with the documented read-only commands and let the answer disambiguate.
+    greeted = b""
+    if greet and family in ("silent", "unknown"):
+        print("\npass 2: silent, so sending the read-only MSP greeting")
+        print("        (MSP_IDENT/FC_VARIANT/BOARD_INFO/BUILD_INFO -- no writes)")
+        try:
+            greeted = msp_greet(s)
+        except Exception as exc:
+            print(f"        greeting failed: {exc}")
+        if greeted:
+            print(f"        received {len(greeted)} bytes")
+            print(hexdump(greeted))
+        else:
+            print("        still nothing")
+
+    s.close()
+
+    if greeted:
+        family, why = "msp", "answered a read-only MSP request"
     print(f"\n==> {family.upper()}: {why}")
 
+    if greeted:
+        print("\nread-only replies:")
+        describe_msp(greeted)
+
     if family == "omnitwin":
-        print("    run the dashboard and Connect -- this board is already ours.")
-    elif family in ("msp", "mavlink", "crsf", "nmea"):
-        print("    client transport: read what it volunteers, never write, never flash.")
-        print("    whatever sensors the board does not report will read as")
-        print("    'not reporting' rather than as a phantom value.")
+        print("\n    run the dashboard and Connect -- this board is already ours.")
+    elif family == "msp":
+        print("\n    client transport: documented reads only. No MSP_SET_*, no")
+        print("    flash, ever -- a wrong write here spins a motor.")
+        print("    channels it does not volunteer read as 'not reporting'.")
+    elif family in ("mavlink", "crsf", "nmea"):
+        print("\n    client transport: read what it volunteers, never write.")
     elif family == "silent":
-        print("    try a reset button, or a second listen -- some boards stay")
-        print("    quiet until they receive something, which this probe will not do.")
+        print("\n    still silent after the greeting. Likely: the board is powered")
+        print("    down, in its bootloader, or the cable carries no data.")
+        print("    If Cleanflight Configurator works on this port, tell me -- that")
+        print("    would mean it needs a different greeting or a baud change.")
     else:
-        print("    bring the silkscreen text and the LED pattern; those usually")
-        print("    identify the board faster than the bytes do.")
+        print("\n    bring the silkscreen text and the LED pattern.")
     return 0
 
 
@@ -216,11 +360,13 @@ def main() -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("port", nargs="?", help="e.g. COM3")
     ap.add_argument("--list", action="store_true", help="list serial ports and exit")
+    ap.add_argument("--no-greet", action="store_true",
+                    help="passive only: never send anything, not even MSP_IDENT")
     args = ap.parse_args()
 
     if args.list or not args.port:
         return list_ports()
-    return probe(args.port)
+    return probe(args.port, greet=not args.no_greet)
 
 
 if __name__ == "__main__":

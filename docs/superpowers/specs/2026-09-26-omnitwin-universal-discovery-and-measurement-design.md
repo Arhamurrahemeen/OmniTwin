@@ -1,8 +1,8 @@
 # OmniTwin Multi-Board Platform — Design Spec
 
-Status: proposed, pending **hardware verification against a real flight
-controller**. Supersedes the framing of
-`2026-09-26-omnitwin-universal-discovery-and-measurement-design.md`.
+Status: proposed. Architecture complete and verified against a **real SP Racing
+F3 running Cleanflight 2.5.0** (§5.2). One item remains open: byte-level
+verification of the MSP frame against a live capture.
 
 ## 0. What this is
 
@@ -115,18 +115,24 @@ Consequences that matter:
 
 ### 3.1 What each transport can actually deliver
 
-| Channel | `omnitwin-own` (ESP32/AVR) | `msp` | `mavlink` | `nmea` |
+| Channel | `omnitwin-own` (ESP32/AVR) | `msp` (measured, §5.2) | `mavlink` | `nmea` |
 |---|---|---|---|---|
-| accel / gyro | from our own bus probe | ✅ | ✅ | — |
-| baro | if wired | ✅ | ✅ | — |
-| temperature / humidity | if wired | (FC's own) | (FC's own) | — |
-| magnetometer | if wired | ✅ | ✅ | — |
-| GPS | — | ✅ | ✅ | ✅ |
+| accel / gyro | from our own bus probe | **✅** | ✅ | — |
+| baro | if wired | ❌ (no baro on an F3) | ✅ | — |
+| temperature / humidity | if wired | ❌ | — | — |
+| magnetometer | if wired | ❌ (absent on F3) | ✅ | — |
+| GPS | — | ✅ if a module is fitted | ✅ | ✅ |
 | battery / RPM | — | ✅ | ✅ | — |
 | **DHT22** | ✅ if wired | ❌ | ❌ | ❌ |
 
-The ❌ rows are the honest, useful part: they render as `⚠ not reporting`, not as
-a phantom zero.
+The `msp` column is **measured on the user's own SP Racing F3**, not assumed. It
+delivers `accel` and `gyro` and nothing else — which is precisely why a twin
+built on it is mostly `notReporting` badges, and why that is the correct outcome
+rather than a disappointing one. The student learns what their board actually
+has.
+
+A flight controller also needs **no component entry at all** under the §3 split.
+It delivers channels; the student names the parts, or nothing is drawn.
 
 ## 4. The channel-keyed stream
 
@@ -149,9 +155,9 @@ A 1.x board keeps working during rollout via the legacy parser selected by the
 
 ## 5. Identification, verified read-only
 
-`firmware/probe_board.py` answers "what is this board?" without writing a byte,
-and `probe_board_test.py` tests the classifier against synthetic frames of every
-supported protocol with no hardware attached.
+`firmware/probe_board.py` answers "what is this board?" without writing a byte in
+its first pass, and `firmware/probe_board_test.py` tests the classifier against
+synthetic frames of every supported protocol with no hardware attached.
 
 MSP detection requires its 3-byte header to **repeat** — a lone `0xAA` is what
 boot banners emit, and a false positive there means parsing noise as flight
@@ -159,9 +165,68 @@ commands. The self-test caught a real bug in the CRSF detector (the `0xEE`
 terminator is the last byte at `i + length - 1`, since `length` excludes the sync
 byte).
 
-**This is the spec's main open dependency:** the MSP and MAVLink adapters cannot
-be written until a real board tells us which stack it runs and what it volunteers.
-Everything above is designed; §6 and §7 are blocked on hardware.
+### 5.1 A silent port is not a fault
+
+The probe's second pass sends a read-only MSP greeting, because **MSP is
+request/response: a healthy flight controller says nothing until asked.** An
+earlier assumption that a flight controller "actively streams telemetry
+unprompted" was wrong, and it inverted the meaning of the most useful signal the
+tool produces.
+
+This is why the greeting is part of pass 2 rather than the whole design: a
+documented read command is safe, but it is not the same as sending nothing. The
+rule in §2.1 is therefore **"read commands allowed, write commands forbidden"**,
+not "send nothing" — the latter is unsatisfiable for any request/response
+protocol, and a board that never answers is indistinguishable from a dead one.
+
+### 5.2 The reference board, measured
+
+Verified against the user's own hardware, read-only:
+
+| | |
+|---|---|
+| Board | SP Racing F3, STM32F3 (72 MHz) |
+| Firmware | **Cleanflight 2.5.0**, Oct 2018, `08348b705` |
+| Protocol | **MSP API 1.40 — MSPv1 only** |
+| Variant code | **`SRF3`** (long form `SPRACINGF3`) |
+| Channels | `accel`, `gyro` only — no baro, no mag (normal for an F3) |
+| Arming disabled | `RXLOSS`, `CLI`, `MSP` — expected on a bench with no radio |
+
+Three corrections this produced, all of which had been assumptions in the wrong
+direction:
+
+1. **MSPv2 does not exist on this firmware.** MSPv2 arrived in Betaflight 3.x.
+   A 2018 Cleanflight build is v1-only, so the adapter targets v1 and v2 support
+   is a separate, additive concern for modern boards.
+2. **The board returned zero bytes because no battery was connected.** The
+   CP2102 enumerates off USB power alone, so a bridge that appears says nothing
+   about whether the MCU is running. A "connected" USB device on a flight
+   controller is not evidence of a working board. This is worth stating in the
+   product: OmniTwin must distinguish *bridge present* from *target responding*,
+   or it will confidently report a dead board as a healthy one.
+3. **`I2C Errors: 7`** on the reference board — a real accumulated fault,
+   independent of OmniTwin, and a reminder that a twin surfaces hardware health
+   the student had not noticed.
+
+The 12-byte MSPv1 frame is fixed-width:
+
+```
+$AA 'M' '<' size_lo size_hi cmd payload[5] checksum
+```
+
+The size field states the **real** length (cmd + payload); the payload slot is
+zero-padded, but the padding is not protocol. The checksum is XOR over
+`size_lo, size_hi, cmd` and exactly `size - 1` payload bytes — derived from
+Betaflight's receive state machine (`msp_serial.c`, `MSP_HEADER_V1` →
+`MSP_PAYLOAD_V1`), where `dataSize = hdr->size` and only that many payload bytes
+are consumed and XORed.
+
+**Byte-level verification is still outstanding.** The framing is derived from
+Betaflight's implementation and is very likely correct, but three separate
+assumptions about MSP were wrong today (variable-length frames, checksum span
+over padding, and MSPv2 support). The parser must be confirmed against a live
+capture — `firmware/capture_fc.py` logs the raw replies read-only — before the
+MSP adapter is trusted. **Design is complete; byte verification is not.**
 
 ## 6. Onboarding, and the honest limit
 
@@ -195,24 +260,33 @@ ESP32 + AVR ports against **shared golden vectors** · `notReporting` extended t
 student's own source, feeding the tutor exactly as wiring faults do today. No
 patching, no file writes.
 
-**Blocked on hardware:** `msp` and `mavlink` client adapters.
+**Blocked on one thing:** `msp` byte verification (§5.2). The design is done —
+protocol, variant, channel set all known — and only a live capture is outstanding.
+`mavlink` remains entirely unstarted; no MAVLink hardware exists on the bench, and
+ArduPilot/PX4 boards are also normally flashable, so whether they are a *client*
+transport at all is unconfirmed.
 
 **On demand:** ultrasonic (needs request/response), IR digital, analog.
 
 **Deferred:** multi-board sessions · external registry · actuators (after the
-pilot, team decision) · tutor patching.
+pilot, team decision) · tutor patching · MSPv2 (additive, for Betaflight 3.x+).
 
 ## 8. Open questions
 
-1. **Which stack does the test flight controller run?** MSP and MAVLink lead to
-   different adapters and different channel sets. The probe answers this in one run.
-2. **AVR float printf and RAM (§6)** — verify before designing around them.
-3. **Does a flight controller volunteer sensor data unsolicited, or only in
-   response to a request?** This decides whether a client adapter can be
-   *strictly* read-only or needs a read-request verb. If it needs requests, those
-   must be added to the §2.1 allowlist explicitly.
-4. **`docs/Cost-Structure.md`** still frames spend around a hardware batch. With
+1. **AVR float printf and RAM (§6)** — verify before designing around them. This
+   is now the only Plan A question that gates design.
+2. **`docs/Cost-Structure.md`** still frames spend around a hardware batch. With
    no kit, does it need rewriting or is it historical record?
+3. **Is a 2018 Cleanflight build a realistic reference for students?** The user has
+   `2.5.0`; current firmware is Betaflight 4.x. If a student's project runs
+   modern firmware, the MSP adapter must handle v2 as well as v1, and the channel
+   set may differ. Worth confirming what a typical student's board carries before
+   committing to v1-only.
+4. **Should a board with accumulated I2C errors be badged as faulty?** The
+   reference FC reports `I2C Errors: 7`. A transport-level health channel would
+   let the twin say "your bus has errors" instead of only reporting missing
+   channels. Not required for a first adapter; noted because it is exactly the
+   kind of fault this product exists to surface.
 
 ## 9. Carried-over open items
 
