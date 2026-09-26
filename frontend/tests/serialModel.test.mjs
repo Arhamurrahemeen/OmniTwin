@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert'
 import {
   readLine, parseScan, scanToComponents, defaultLayout,
-  addComponent, moveComponent, addWire, removeWire, pinPos, wiresFor,
+  addComponent, removeComponent, moveComponent, addWire, removeWire, pinPos, wiresFor,
   wiringFlags, wiringFaults, wireStroke, referenceGhosts,
   anomalyFlags, notReporting, partFaults, withTimeout, scanNotice,
 } from '../src/serial/serialModel.mjs'
@@ -312,6 +312,30 @@ test('partFaults drops the connection-level flag so it cannot badge every part',
   assert.deepEqual(partFaults(['no data yet']), [])
   assert.deepEqual(partFaults(['temperature above 40']), ['temperature above 40'])
   assert.deepEqual(partFaults(['no data yet', 'vib above 0.2']), ['vib above 0.2'])
+})
+
+test('removeComponent takes the part and every wire that touched it', () => {
+  // A dangling wire does not crash — pinPos returns {0,0} for an unresolvable
+  // id, so it renders collapsed into the canvas corner. Pruning both sides in
+  // one operation is the only place that knows the pairing.
+  const l = defaultLayout([{ type: 'esp32' }, { type: 'mpu6050' }, { type: 'dht22' }])
+  const [esp, mpu, dht] = l.components
+  let w = addWire(l, esp.id, 'SDA', mpu.id, 'SDA')
+  w = addWire(w, esp.id, 'SCL', mpu.id, 'SCL')
+  w = addWire(w, esp.id, '3V3', dht.id, 'VCC')          // unrelated, must survive
+  const out = removeComponent(w, mpu.id)
+  assert.deepEqual(out.components.map(c => c.type), ['esp32', 'dht22'])
+  assert.equal(out.wires.length, 1, 'both MPU wires must be pruned')
+  assert.equal(out.wires[0].toComponentId, dht.id, 'the DHT22 wire must survive')
+  assert.deepEqual(wiringFlags(out.wires, out.components), [])
+  assert.deepEqual(pinPos(out.components[1], 'VCC'), { x: dht.x + 20, y: dht.y + 18 })
+})
+
+test('removeComponent ignores an id that is not on the canvas', () => {
+  const l = defaultLayout([{ type: 'esp32' }, { type: 'mpu6050' }])
+  const out = removeComponent(l, 'nope')
+  assert.equal(out.components.length, 2)
+  assert.deepEqual(out.wires, [])
 })
 
 test('withTimeout rejects when the promise never settles', async () => {

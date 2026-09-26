@@ -7,7 +7,7 @@ import { DemoSession } from './serial/demoSession.mjs'
 import ADAPTER from './serial/adapters/twinlab_esp32_v1'
 import {
   defaultLayout, parseScan, detectAdapter, detectComponents, scanNotice,
-  addComponent, moveComponent, addWire, removeWire, anomalyFlags, partFaults, wiringFlags, componentDef, notReporting,
+  addComponent, removeComponent, moveComponent, addWire, removeWire, anomalyFlags, partFaults, wiringFlags, componentDef, notReporting,
 } from './serial/serialModel.mjs'
 import { askTutor } from './api'
 import wordmark from './assets/wordmark.png'
@@ -248,7 +248,8 @@ export default function App() {
                 onMove={(id, x, y) => setLayout(l => moveComponent(l, id, x, y))}
                 onAdd={(type) => setLayout(l => addComponent(l, type))}
                 onWire={(fc, fp, tc, tp) => setLayout(l => addWire(l, fc, fp, tc, tp))}
-                onUnwire={(wid) => setLayout(l => removeWire(l, wid))} scanInfo={scanInfo} />
+                onUnwire={(wid) => setLayout(l => removeWire(l, wid))}
+                onRemove={(id) => setLayout(l => removeComponent(l, id))} scanInfo={scanInfo} />
             </>
           )}
         </main>

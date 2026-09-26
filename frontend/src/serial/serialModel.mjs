@@ -109,6 +109,18 @@ export function removeWire(layout, wireId) {
   return { ...layout, wires: layout.wires.filter(w => w.id !== wireId) }
 }
 
+// Take a part off the canvas. Its wires MUST go with it: a wire references a
+// component id, and pinPos() returns {0,0} for an id it cannot resolve — so a
+// dangling wire does not crash, it silently collapses into the canvas corner.
+// Pruning here is the only place that knows both sides.
+export function removeComponent(layout, componentId) {
+  return {
+    components: layout.components.filter(c => c.id !== componentId),
+    wires: layout.wires.filter(w =>
+      w.fromComponentId !== componentId && w.toComponentId !== componentId),
+  }
+}
+
 // Screen position of a pin: the component's x/y plus the pin's registry offset.
 // Falls back to {0,0} when the component or pin is unknown, which is also the
 // signal callers use to skip an unresolvable wire.

@@ -9,7 +9,7 @@ import ADAPTER from '../serial/adapters/twinlab_esp32_v1'
 // Pin dot colour by kind — the same convention the wire stroke uses.
 const PIN_COLOR = { power: 'var(--ot-power)', ground: 'var(--ot-ground)', signal: 'var(--ot-green)' }
 
-export default function TwinCanvas({ layout, live = {}, sensorFlags = [], onMove, onAdd, onWire, onUnwire, scanInfo = null }) {
+export default function TwinCanvas({ layout, live = {}, sensorFlags = [], onMove, onAdd, onWire, onUnwire, onRemove = () => {}, scanInfo = null }) {
   const [dragging, setDragging] = useState(null)
   const [addType, setAddType] = useState('breadboard')
   const [armed, setArmed] = useState(null)   // { componentId, pinId } awaiting its partner
@@ -86,6 +86,18 @@ export default function TwinCanvas({ layout, live = {}, sensorFlags = [], onMove
           onPointerDown={onPointerDown(c)}
           style={{ position: 'absolute', left: c.x, top: c.y, cursor: 'move', userSelect: 'none' }}
         >
+          <button
+            className="canvas-remove"
+            aria-label={`Remove ${componentDef(c.type)?.label ?? c.type}`}
+            title="Remove this part and any wires to it"
+            // stopPropagation on BOTH: without the pointerdown stop this starts
+            // a drag, and without the click stop the canvas handler sees a click
+            // on empty space and cancels an armed wire.
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => { e.stopPropagation(); onRemove(c.id) }}
+          >
+            ×
+          </button>
           <ComponentSprite type={c.type} />
           <div style={{ fontSize: 10, fontFamily: 'JetBrains Mono', color: 'var(--ot-ink)', textAlign: 'center' }}>
             {componentDef(c.type)?.label ?? c.type}

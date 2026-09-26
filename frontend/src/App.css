@@ -750,6 +750,37 @@
   position: relative;
 }
 
+/* Per-sprite delete. The manual path is the correctness backstop for anything
+   auto-detection gets wrong, so it has to be able to remove as well as add.
+   ponytail: no confirm dialog and no undo. Removing takes the part's wires with
+   it, which is the destructive part — a Rescan restores auto-detected parts,
+   and a student who mis-plugs something is exactly who needs this to be one
+   click, not a modal. Add undo if it turns out to be hit by accident. */
+.canvas-remove {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  z-index: 2;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  line-height: 1;
+  font-size: 12px;
+  cursor: pointer;
+  color: var(--ot-ink);
+  background: var(--ot-paper);
+  border: 1px solid var(--ot-ink);
+  border-radius: 50%;
+  opacity: 0.55;
+}
+
+.canvas-remove:hover {
+  opacity: 1;
+  color: var(--ot-paper);
+  background: var(--ot-orange);
+  border-color: var(--ot-orange);
+}
+
 .tutor-panel {
   width: 300px;
   padding: 16px;
