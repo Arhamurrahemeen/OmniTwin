@@ -184,26 +184,32 @@ Playwright MCP server is configured with `--browser msedge` and
   Check them before re-litigating a past decision. The current spec for the
   universal-detection/canvas work is
   `docs/superpowers/specs/2026-09-26-omnitwin-universal-detection-canvas-design.md`.
-  Its successor — **proposed, and blocked on hardware verification** — is
+  Its successor — **proposed** — is
   `docs/superpowers/specs/2026-09-26-omnitwin-universal-discovery-and-measurement-design.md`.
-  **OmniTwin is a platform for debugging students' own semester projects, not a
-  sensor kit** — do not plan work from the parts list in `Cost-Structure.md`. It
-  handles two board classes through one dashboard: boards we can flash (we own
-  the bus) and boards we cannot (flight controllers, GPS, radio — we only read
-  what they volunteer). **§2.1 is a safety rule, not a style note: a client
-  adapter contains zero write commands, enforced by a grep test, because a wrong
-  write on a flight controller spins a motor.** Read §0, §2 and §3 before
-  touching discovery, adapters or firmware.
+  **OmniTwin is software that observes a student's project — it never touches
+  their board.** The student brings hardware with their own firmware already
+  flashed, plus their source. OmniTwin reads the code, derives the hardware from
+  it, visualises it on the canvas, and tutors them. **Nothing is sold, flashed,
+  or installed, and no board-specific firmware is ever proposed** — see that
+  spec's §0.1, which records the wrong premise (a C library, a dashboard Flash
+  button, port targets, a dongle) so it is not re-proposed. §4.1 is a safety
+  rule: the serial layer opens read-only and contains zero write verbs.
   (`.superpowers/sdd/` is git-ignored scratch — `*` in its own `.gitignore` —
   and holds only per-plan SDD artifacts: `plan-path`, `progress.md`, task briefs,
   review diffs. Never put a spec there; it will not be committed.)
 
+- **A USB bridge enumerating proves nothing about the target.** The CP210x on a
+  flight controller appears off USB power alone while the STM32 stays dark, so
+  a "connected" port can sit over a dead board. Any "is it live?" logic must
+  distinguish *bridge present* from *target responding* — the same bug class as
+  reporting a dead sensor as a live `0.000`. Also: request/response protocols
+  (MSP) are silent when healthy, so silence is not a fault.
 - **Identify an unknown board read-only, never by poking it:**
   `firmware/probe_board.py <COMx>` reports what a board volunteers (omnitwin /
-  MSP / MAVLink / CRSF / NMEA) and writes **nothing**. Its classifier is tested
-  against synthetic frames with no hardware by `firmware/probe_board_test.py` —
-  the model to follow for any protocol-parsing code, since `proto_selftest` can
-  only run on flashed hardware.
+  MSP / MAVLink / CRSF / NMEA); its first pass writes nothing. The classifier is
+  tested against synthetic frames with no hardware by
+  `firmware/probe_board_test.py` — the model to follow for protocol-parsing code,
+  since our own `proto_selftest` can only run on flashed hardware.
 
 - Frontend assets are author-created SVG (`ComponentSprite.jsx`) — no icon library.
 - **Read `docs/superpowers/specs/2026-09-26-omnitwin-universal-detection-canvas-design.md`

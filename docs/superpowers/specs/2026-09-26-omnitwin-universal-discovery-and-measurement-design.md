@@ -1,309 +1,249 @@
-# OmniTwin Multi-Board Platform — Design Spec
+# OmniTwin — Student Project Debugger — Design Spec
 
-Status: proposed. Architecture complete and verified against a **real SP Racing
-F3 running Cleanflight 2.5.0** (§5.2). One item remains open: byte-level
-verification of the MSP frame against a live capture.
+Status: proposed. Supersedes the framing of the two previous drafts of this
+document, which were built on a **wrong premise** (see §0.1).
 
 ## 0. What this is
 
-OmniTwin is an engine for students to debug their own semester hardware
-projects. It is not a kit. There is no parts list and no sensor is ever "in the
-kit" — a protocol capability exists when a student's project needs it.
+OmniTwin is **software** for students to debug their own semester hardware
+projects. A student brings:
 
-**The artifact is the student's code.** The twin exists to explain *why their
-code misbehaves*: SDA in GND is why a register read returns 0; a silent sensor
-is why their `ax` is `null`. This makes every board type below a *debugging*
-surface, not a compatibility claim.
+1. their hardware, with **their own firmware already flashed**, and
+2. **their source code**.
 
-**One board at a time.** No port enumeration UI, no multi-session, no merged
-canvas. Transport detection is a property of the single connected board, which
-removes a whole category of work.
+OmniTwin scans both, visualises the hardware on a canvas, shows the code on its
+own tab, and gives them an AI tutor for debugging, guidance and learning.
 
-**One dashboard, two board classes**, and the UI names the mode rather than
-hiding it. A student plugging in a flight controller sees *"reading telemetry,
-sensors untouched"* — which is both the safety story and a demoable feature.
+**Nothing is sold, flashed, or installed. Ever.** There is no kit, no dongle, no
+supported-board list, no firmware agent, and no C library for the student to
+link. The student's board stays exactly as it is.
 
-## 1. The constraint that shapes everything
+The whole product is three read-only channels, all served from what the student
+already has:
 
-Web Serial is a byte pipe. The browser cannot do I2C and cannot touch a GPIO, so
-**all hardware discovery is delegated to the board.** The registry only
-parameterises interpretation of what the board reported.
-
-Two consequences, both settled:
-
-- **We never flash by default.** Flashing is always an explicit, labelled action.
-- **A student flashes their own project.** So OmniTwin cannot also occupy the
-  board — the two cannot coexist. OmniTwin ships as a **portable C library the
-  student links into their own program**, or as a prebuilt image flashed by a
-  dashboard button. It is never firmware that *replaces* their work.
-
-## 2. Two board classes, one safety rule
-
-| | Configurable | Non-configurable |
+| Channel | Source of truth | Requires setup? |
 |---|---|---|
-| Examples | ESP32, Arduino | flight controllers, GPS, ELRS radio, closed modules |
-| Flash ours | yes | **never** |
-| Bus access | ours, after we own it | **never** |
-| OmniTwin is | the **server** | a **client** |
-| Reads | anything we probe | only what the device volunteers |
+| **Code** | the project folder the student hands over | No — it is already theirs |
+| **Hardware** | **derived from that source**: MCU, pins, buses, addresses, protocols | No |
+| **Live values** | the serial log their firmware already prints | No |
 
-### 2.1 The safety rule, verbatim
+### 0.1 The wrong premise this replaces
 
-> **A client adapter is inert by omission. It contains zero write commands —
-> no `SET_`, no `DO_`, no `SEND`, no flash path — because a wrong write on a
-> flight controller spins a motor, not just logs a bad reading.**
+Earlier drafts concluded that because a browser cannot do I2C or touch a GPIO,
+**OmniTwin had to run on the student's board** — and from that followed a C
+library, a dashboard Flash button, ESP32/AVR port targets, a supported board
+list, and a telemetry dongle.
 
-This is deliberately **not** a `busAccess: 'none'` metadata field. A flag is a
-note; nothing stops someone adding an `MSP_SET_RAW_RC` handler in six months and
-the flag stays `none` while the code arms a motor. The guarantee comes from what
-the code does not contain, which survives refactoring.
+All of it was wrong, and wrong in the same way: each piece assumed OmniTwin must
+**install itself** onto the student's hardware in order to observe it. It does
+not. The student already flashed their own firmware and already has the source,
+so the hardware topology can be read out of the source, and the runtime values
+come from the log that firmware already prints.
 
-**Enforcement:** a test greps every client adapter for write verbs and fails.
-That is the whole mechanism — cheap, and it makes the rule permanent rather than
-aspirational.
+**"Universal detection" therefore never needed our firmware.** It needs the
+student's.
 
-### 2.2 Inertness of `identCommand`, stated as a rule
+## 1. The one real constraint
 
-Every adapter's identification command must be **provably inert** on a board that
-does not speak it — not incidentally so. Probing order is asserted by test
-(`adapters.test.mjs:84`: a losing dialect gets `IDENT` and nothing else), but
-that test only proves *we* send nothing further. It does not prove the bytes are
-harmless to the other side. On this hardware, that is the difference between a
-log line and a spinning prop.
+A browser cannot do I2C and cannot touch a GPIO. So OmniTwin never drives a bus.
 
-Also worth stating because it is easy to get wrong: connecting to a flight
-controller is **not** what risks it. We never write, so a client session cannot
-arm or spin anything. The risk lives entirely in the *flash* path, which client
-transports do not have.
+That constraint has a much smaller cost than it first appears, because **the
+source code states the hardware**: `Wire.begin(21, 22)`, `0x68`, `DHT.begin(4)`,
+`pinMode(13, OUTPUT)` are all declarations of fact, written by the student. We
+read them instead of guessing them.
 
-## 3. Channels are vocabulary; components are optional identity
+The genuine limit, stated plainly rather than hidden:
 
-**Splitting these is the core modelling decision.** A channel is a physical
-quantity; a component is a part that may provide some channels. Collapsing them
-means every chip that measures acceleration needs its own bespoke entry, and
-adding an IMU to a drone becomes a data change rather than a non-event.
+> **Live values exist only if the student's firmware prints them.** A silent
+> project yields its code and its declared hardware, but no numbers.
+
+The UI must say so explicitly — *"this firmware prints nothing; add a
+`Serial.print` to see live values"* — rather than showing empty gauges that look
+like a fault. This is the same honesty rule as `ax: null` and `ok: false`.
+
+## 2. Channel and component, kept separate
+
+**Channels are vocabulary; components are optional identity.** A channel is a
+physical quantity; a component is a part that may provide some channels. This
+matters because a student's hardware is described in *their* terms — an MPU6050,
+a DHT22, an MPU9250 — and we should not need a bespoke registry entry per chip.
 
 ```json
 "channels": [
-  { "key": "accel",   "label": "acceleration",   "unit": "m/s^2", "decimals": 2 },
-  { "key": "gyro",    "label": "angular rate",   "unit": "deg/s",  "decimals": 1 },
-  { "key": "baro",    "label": "pressure",       "unit": "hPa",    "decimals": 1 },
-  { "key": "temperature", "label": "temperature", "unit": "°C", "decimals": 1,
-    "min": -40, "max": 80 }
+  { "key": "accel",  "unit": "m/s^2", "decimals": 2 },
+  { "key": "gyro",   "unit": "deg/s", "decimals": 1 },
+  { "key": "baro",   "unit": "hPa",   "decimals": 1, "min": 300, "max": 1100 },
+  { "key": "temperature", "unit": "°C", "decimals": 1, "min": -40, "max": 80 },
+  { "key": "humidity",    "unit": "%",  "decimals": 1, "min": 0,  "max": 100 }
 ]
 ```
 
-A component declares what it provides, and provides an optional identity:
+A part declares what it provides:
 
 ```json
 { "id": "mpu6050", "label": "MPU6050", "kind": "i2c",
   "provides": ["accel", "gyro", "temperature"],
-  "identity": { "whoamiReg": "0x75", "whoamiVal": "0x68" } }
+  "identity": { "whoamiReg": "0x75", "whoamiVal": "0x68" },
+  "pins": [ { "id": "SDA", "kind": "signal", "label": "SDA" } ] }
 ```
 
-Consequences that matter:
+**Pins are derived from the student's source, not from a fixed board.** `pinMode`
+and pin constants in their code populate the pin list. A student wiring an MPU to
+GPIO 13/14 instead of 21/22 gets a canvas that shows *their* wiring, which is the
+entire value of the product — the old hardcoded `always.esp32` entry described
+*our* board, not theirs, and was wrong for every student who used different pins.
 
-- The FC's own IMU, an MPU6050, and anything else all deliver `accel`. **No
-  per-chip, per-transport data.** A flight controller needs no component entry
-  at all.
-- Under this split we make **no identity claim about a flight controller's
-  sensors.** We receive `accel`; if nothing is identified, nothing is drawn.
-  That is the honest position, and the previous draft got it wrong by implying
-  "the FC's own IMU".
-- A DHT22 on a flight controller is a **declared channel no transport
-  delivers** — which is exactly `notReporting`, already built. No new mechanism.
+### 2.1 Three ways a channel gets its value
 
-### 3.1 What each transport can actually deliver
+| Source | Example | Confidence |
+|---|---|---|
+| **declared** — in the source only | `0x68` on the I2C bus | the student wired it; we believe them |
+| **reported** — printed at runtime | `temp=24.3` on the serial log | measured |
+| **absent** — neither | a DHT22 with no code and no output | render `⚠ not reporting` |
 
-| Channel | `omnitwin-own` (ESP32/AVR) | `msp` (measured, §5.2) | `mavlink` | `nmea` |
-|---|---|---|---|---|
-| accel / gyro | from our own bus probe | **✅** | ✅ | — |
-| baro | if wired | ❌ (no baro on an F3) | ✅ | — |
-| temperature / humidity | if wired | ❌ | — | — |
-| magnetometer | if wired | ❌ (absent on F3) | ✅ | — |
-| GPS | — | ✅ if a module is fitted | ✅ | ✅ |
-| battery / RPM | — | ✅ | ✅ | — |
-| **DHT22** | ✅ if wired | ❌ | ❌ | ❌ |
+`notReporting` already exists in the codebase and covers the third case. A
+channel that is declared but never reported is exactly the badge it was built
+for — no new mechanism required.
 
-The `msp` column is **measured on the user's own SP Racing F3**, not assumed. It
-delivers `accel` and `gyro` and nothing else — which is precisely why a twin
-built on it is mostly `notReporting` badges, and why that is the correct outcome
-rather than a disappointing one. The student learns what their board actually
-has.
+## 3. Code is half the product
 
-A flight controller also needs **no component entry at all** under the §3 split.
-It delivers channels; the student names the parts, or nothing is drawn.
+A separate tab shows the student's source, and `codeFlags()` runs a **zero-LLM
+static pass** over it before any tutor call — the same philosophy as
+`anomalyFlags()`: cheap local checks first, LLM only to explain.
 
-## 4. The channel-keyed stream
+Checks, in rough priority order:
 
-Firmware currently emits `{"ts":…,"temp":…,"hum":…,"ax":…,"ay":…,"az":…}` and
-`toReading` maps exactly those six keys. This fixed frame is why every new sensor
-is a special case in both C and JS, and it is specified first for that reason.
+- **Blocking calls in a task loop** — `delay()` inside an RTOS task starves
+  everything else. The classic embedded killer.
+- **`printf` format mismatches** — `%d` with a `float`, wrong argument count.
+- **Missing bounds checks** on array/register indices.
+- **I2C calls that ignore their return value** — a NAK reads as success. This is
+  exactly how a real sensor bug stayed invisible for a session in this repo.
+- **Hardcoded magic numbers** that should be named constants.
+- **Unchecked `malloc`/buffer writes** on AVR-class targets, where 2 KB of RAM
+  makes overflow likely.
 
-```json
-{ "ts": 45146, "ch": { "accel": 0.01, "gyro": 0.02, "baro": 1013.2,
-                       "temperature": 25.1, "humidity": 55.0 } }
-```
+Findings feed the tutor as structured context, the same way wiring faults and
+anomaly flags do today. **No patching, no file writes** — the per-change Apply
+work stays deferred.
 
-One key namespace across wire, registry, display and tutor context. This
-structurally kills a live bug: `SENSOR_RANGES` keys on `humidity` while the wire
-key is `hum`, so `SENSOR_RANGES['hum']` is `undefined` and **the 20–90 % humidity
-check has never once fired** — dead code shaped like a working feature.
+## 4. Serial intake
 
-A 1.x board keeps working during rollout via the legacy parser selected by the
-`fw` field already returned by `IDENT`.
+The dashboard opens the port read-only and consumes whatever arrives. Three
+recognisable shapes, best-effort:
 
-## 5. Identification, verified read-only
+- **JSON** — `{"ax":0.01,"temp":24.3}` or any subset. Trivial and exact.
+- **`key=value` pairs** — `temp=24.3 hum=55.0`. Common in quick student projects.
+- **Free text** — `I2C: NACK on 0x68`, `sensor not found`. Not parseable into
+  channels, but **valuable evidence** for the tutor, and the raw log is shown
+  verbatim in the UI.
 
-`firmware/probe_board.py` answers "what is this board?" without writing a byte in
-its first pass, and `firmware/probe_board_test.py` tests the classifier against
-synthetic frames of every supported protocol with no hardware attached.
+There is no format OmniTwin imposes, because imposing one would mean the student
+changing their code — which this product will not ask.
 
-MSP detection requires its 3-byte header to **repeat** — a lone `0xAA` is what
-boot banners emit, and a false positive there means parsing noise as flight
-commands. The self-test caught a real bug in the CRSF detector (the `0xEE`
-terminator is the last byte at `i + length - 1`, since `length` excludes the sync
-byte).
+### 4.1 Safety
 
-### 5.1 A silent port is not a fault
+> **OmniTwin never writes to a port, never flashes a device, and never issues a
+> command that changes hardware state.**
 
-The probe's second pass sends a read-only MSP greeting, because **MSP is
-request/response: a healthy flight controller says nothing until asked.** An
-earlier assumption that a flight controller "actively streams telemetry
-unprompted" was wrong, and it inverted the meaning of the most useful signal the
-tool produces.
+Ports are opened for reading only. No `MSP_SET_*`, no `DO_*`, no upload path, no
+bootloader interaction. This holds for every board including flight controllers,
+where a wrong write spins a motor rather than logging a bad reading.
 
-This is why the greeting is part of pass 2 rather than the whole design: a
-documented read command is safe, but it is not the same as sending nothing. The
-rule in §2.1 is therefore **"read commands allowed, write commands forbidden"**,
-not "send nothing" — the latter is unsatisfiable for any request/response
-protocol, and a board that never answers is indistinguishable from a dead one.
+The guarantee is **by omission** — no write verbs exist in the serial layer — and
+it is enforced by a test that greps the client for them. A metadata flag is a
+note; absent code is a guarantee.
 
-### 5.2 The reference board, measured
+## 5. Canvas
 
-Verified against the user's own hardware, read-only:
+Same canvas as today, with one change: **parts come from the student's source
+rather than from a fixed registry scan.** Wires are drawn and checked with the
+existing `kind` comparison (power/ground/signal), and faults feed the tutor.
 
-| | |
-|---|---|
-| Board | SP Racing F3, STM32F3 (72 MHz) |
-| Firmware | **Cleanflight 2.5.0**, Oct 2018, `08348b705` |
-| Protocol | **MSP API 1.40 — MSPv1 only** |
-| Variant code | **`SRF3`** (long form `SPRACINGF3`) |
-| Channels | `accel`, `gyro` only — no baro, no mag (normal for an F3) |
-| Arming disabled | `RXLOSS`, `CLI`, `MSP` — expected on a bench with no radio |
+The teaching label stays honest: colour is by pin *kind*, not a simulation of
+voltage or current. Nothing in a student project can measure current, and the UI
+must not imply otherwise.
 
-Three corrections this produced, all of which had been assumptions in the wrong
-direction:
+## 6. The tutor
 
-1. **MSPv2 does not exist on this firmware.** MSPv2 arrived in Betaflight 3.x.
-   A 2018 Cleanflight build is v1-only, so the adapter targets v1 and v2 support
-   is a separate, additive concern for modern boards.
-2. **The board returned zero bytes because no battery was connected.** The
-   CP2102 enumerates off USB power alone, so a bridge that appears says nothing
-   about whether the MCU is running. A "connected" USB device on a flight
-   controller is not evidence of a working board. This is worth stating in the
-   product: OmniTwin must distinguish *bridge present* from *target responding*,
-   or it will confidently report a dead board as a healthy one.
-3. **`I2C Errors: 7`** on the reference board — a real accumulated fault,
-   independent of OmniTwin, and a reminder that a twin surfaces hardware health
-   the student had not noticed.
+Answers from all three channels at once — code, derived hardware, and live log —
+which is what makes it worth having. A student asking "why is my accelerometer
+reading zero" gets an answer that connects their wiring, their register read, and
+the code that performs it.
 
-The 12-byte MSPv1 frame is fixed-width:
+Constraints, all already established:
 
-```
-$AA 'M' '<' size_lo size_hi cmd payload[5] checksum
-```
-
-The size field states the **real** length (cmd + payload); the payload slot is
-zero-padded, but the padding is not protocol. The checksum is XOR over
-`size_lo, size_hi, cmd` and exactly `size - 1` payload bytes — derived from
-Betaflight's receive state machine (`msp_serial.c`, `MSP_HEADER_V1` →
-`MSP_PAYLOAD_V1`), where `dataSize = hdr->size` and only that many payload bytes
-are consumed and XORed.
-
-**Byte-level verification is still outstanding.** The framing is derived from
-Betaflight's implementation and is very likely correct, but three separate
-assumptions about MSP were wrong today (variable-length frames, checksum span
-over padding, and MSPv2 support). The parser must be confirmed against a live
-capture — `firmware/capture_fc.py` logs the raw replies read-only — before the
-MSP adapter is trusted. **Design is complete; byte verification is not.**
-
-## 6. Onboarding, and the honest limit
-
-| Path | Buys | Writes | Friction |
-|---|---|---|---|
-| **C library** (`#include <omnitwin.h>`) | nothing | 2 lines | Arduino IDE, familiar to students |
-| **Flash button** (dashboard, prebuilt image) | nothing | nothing | none — but **overwrites their project** |
-
-Both consume the same core, so the library is the substance and the button is the
-front door. The button is also the recovery path if a student erases the library
-setup — which removes the "stranded with no OmniTwin" failure mode.
-
-**There is no third option.** A browser cannot recompile C, so "add our library
-without the student touching their code" is not achievable; and patching an
-already-compiled binary is not possible either. The Flash button works because it
-ships a *complete* prebuilt image, which necessarily replaces their program.
-
-**Targets:** ESP32 DevKitC and ATmega328P (Arduino R3 / Nano — the same chip, so
-three boards are two silicon targets). Constraints to verify first: AVR does not
-link `printf("%f")` without `-Wl,-u,vfprintf -lprintf_flt`, and has 2 KB of RAM.
-A flight controller is **not** a port target — it is a client transport.
+- **Strictly on-demand.** No proactive or background LLM calls, ever.
+- **No file writes** without a per-change Apply click, and that is deferred.
+- **Plain-text replies**, since the panel renders literal text.
+- Student source is sent to a third-party provider; the UI discloses this in one
+  line, the same way sensor readings already are.
 
 ## 7. Scope
 
-**Plan A — the core:** `omnitwin.h`/`.c` portable core · channel-keyed streaming ·
-channels/components split in the registry · `PROBE <gpio> <protocol>` ·
-ESP32 + AVR ports against **shared golden vectors** · `notReporting` extended to
-"declared but undeliverable".
+**Slice 1 — see a real student project end to end:**
 
-**Plan B — the product's core:** `codeFlags()`, a zero-LLM static checker over the
-student's own source, feeding the tutor exactly as wiring faults do today. No
-patching, no file writes.
+1. Project folder intake via `showDirectoryPicker()`, filtered to `.c .h .ino .cpp`.
+2. `codeFlags()` static pass, findings shown in the code tab.
+3. Hardware derivation from source: MCU, pins, I2C addresses, protocol libraries.
+4. Canvas populated from that derivation, with pin-referenced wires.
+5. Serial intake: JSON, `key=value`, and verbatim free text.
+6. Tutor answering from code + hardware + log together.
 
-**Blocked on one thing:** `msp` byte verification (§5.2). The design is done —
-protocol, variant, channel set all known — and only a live capture is outstanding.
-`mavlink` remains entirely unstarted; no MAVLink hardware exists on the bench, and
-ArduPilot/PX4 boards are also normally flashable, so whether they are a *client*
-transport at all is unconfirmed.
+**Deferred:** MSP/MAVLink client adapters · actuator commands · tutor patching ·
+external registry · multi-board sessions.
 
-**On demand:** ultrasonic (needs request/response), IR digital, analog.
+**Dropped entirely, and worth recording so it is not re-proposed:** C library for
+the student to link · dashboard Flash button · ESP32/AVR firmware port targets ·
+supported board list · telemetry dongle · `PROBE` verb.
 
-**Deferred:** multi-board sessions · external registry · actuators (after the
-pilot, team decision) · tutor patching · MSPv2 (additive, for Betaflight 3.x+).
+### 7.1 The reference flight controller, and what it taught us
+
+The user's SP Racing F3 (Cleanflight 2.5.0, MSP API 1.40) was useful mainly as a
+negative result, and three findings from it are permanent:
+
+- **MSPv2 does not exist on 2018-era firmware.** It arrived in Betaflight 3.x. A
+  modern board would use v2, so any MSP work must handle both.
+- **A USB bridge enumerating proves nothing about the target.** The CP210x
+  appears off USB power alone while the STM32 stays unpowered. Any future
+  "is it connected?" logic must distinguish *bridge present* from *target
+  responding* — the same bug class as reporting a dead sensor as a live `0.000`.
+- **Request/response protocols are silent when healthy.** MSP says nothing until
+  asked, so a silent port is not a fault. An earlier assumption that flight
+  controllers stream telemetry unprompted inverted the most useful signal the
+  probe produces.
+
+A flight controller also delivers only `accel` and `gyro` — no baro, no mag. It
+needs **no component entry at all** under §2, which is the split working as
+intended: a board contributes channels, and the student's source names the parts.
 
 ## 8. Open questions
 
-1. **AVR float printf and RAM (§6)** — verify before designing around them. This
-   is now the only Plan A question that gates design.
-2. **`docs/Cost-Structure.md`** still frames spend around a hardware batch. With
-   no kit, does it need rewriting or is it historical record?
-3. **Is a 2018 Cleanflight build a realistic reference for students?** The user has
-   `2.5.0`; current firmware is Betaflight 4.x. If a student's project runs
-   modern firmware, the MSP adapter must handle v2 as well as v1, and the channel
-   set may differ. Worth confirming what a typical student's board carries before
-   committing to v1-only.
-4. **Should a board with accumulated I2C errors be badged as faulty?** The
-   reference FC reports `I2C Errors: 7`. A transport-level health channel would
-   let the twin say "your bus has errors" instead of only reporting missing
-   channels. Not required for a first adapter; noted because it is exactly the
-   kind of fault this product exists to surface.
+1. **How much of the hardware can be trusted from source alone?** A student who
+   writes `Wire.begin(21,22)` has declared intent, not proof. Does the canvas
+   present declared wiring as fact, or as "your code says X — confirm it"?
+   Leaning towards labelling it as declared, for the same honesty reason as §1.
+2. **Silent projects are the main gap.** Is a nudge ("add a `Serial.print` to
+   see values") enough, or should the tutor offer to write that one line for
+   them?
+3. **What is a non-C project?** PlatformIO projects, MicroPython, Arduino
+   sketches in `.ino` with auto-generated prototypes — the static pass has to
+   tolerate all of them, and `.ino` in particular has no function declarations
+   to work from.
 
 ## 9. Carried-over open items
 
 - **Component removal was missing** and was assumed present by the prior spec.
   **Fixed** — `removeComponent` plus a per-sprite delete that prunes wires.
 - **M9** — the pin gesture arms and detaches on `pointerdown`, so a wire is
-  destroyed on mouse-*down*. Worse now that rigs have more sensors.
-- **M6** — `TwinCanvas` imports the concrete adapter for `referenceWiring`, so the
-  board is still hardcoded in the view.
-- **M13** — `reply_scan`'s `list[512]` truncates silently on a full bus.
-- **Firmware has no off-target test path.** A library port is the first route to
-  one, and `probe_board_test.py` is the precedent: test the protocol layer on the
-  host, with no hardware.
-- **Open hardware question:** the fitted MPU6050 ACKs at `0x68` and answers
-  `WHO_AM_I 0x68`, but ignores its own configuration writes. No firmware change
-  can make a part ignore its own configuration; swapping the module is the next
-  test. The board reports this honestly (`mpu.ready:false`, nulls) rather than
-  streaming a fake `0.000 g`.
-- **§3.5** of the prior spec (tutor patching student source) stays deferred.
-  `codeFlags()` ships its read-only half first.
+  destroyed on mouse-*down*.
+- **M6** — `TwinCanvas` imports the concrete adapter for `referenceWiring`, so a
+  board is still hardcoded in the view. This doc removes the reason it exists.
+- **`SENSOR_RANGES` keys on `humidity` while the wire key is `hum`**, so the
+  20–90 % check has never once fired. Dead code shaped like a working feature.
+- **`ComponentSprite` is `SPRITES[type] ?? "?"`** — art is still a hardcoded map,
+  so a new part renders `?` unless JSX is edited. A generic fallback renderer
+  (plain box + pin dots from the derived geometry) belongs in Slice 1.
+- **Firmware has no off-target test path.** Unchanged, and still true: our own
+  node firmware can only be verified on flashed hardware. That is a fact about
+  *our* firmware, which students do not run.
