@@ -58,6 +58,38 @@ test('scanToComponents tolerates the bus{} block in the SCAN reply', () => {
   assert.ok(types.includes('dht22'))
 })
 
+// --- registry-backed resolution (Task 2) ---
+// These pin the refactor's contract: same behaviour as before for every case
+// the old I2C_MAP handled, plus WHOAMI identity where the two disagree.
+
+test('scanToComponents ignores an address no registry entry claims', () => {
+  const s = parseScan('{"i2c":[{"addr":72,"name":null}],"dht22":{"gpio":4,"ok":true}}')
+  const types = scanToComponents(s).map(c => c.type)
+  assert.deepEqual(types.sort(), ['breadboard', 'dht22', 'esp32'])
+})
+
+test('scanToComponents uses WHOAMI when the board supplies it', () => {
+  // The MPU6050's WHO_AM_I answers 0x68 — the same number as its address.
+  const s = parseScan('{"i2c":[{"addr":104,"whoami":104}],"dht22":{"gpio":4,"ok":false}}')
+  assert.ok(scanToComponents(s).map(c => c.type).includes('mpu6050'))
+})
+
+test('scanToComponents drops an MPU whose WHOAMI byte is wrong', () => {
+  // 0x68 is in mpu6050.candidateAddrs, but 0x58 on register 0x75 is a BMP280.
+  // A read-off-the-chip identity must beat the address.
+  const s = parseScan('{"i2c":[{"addr":104,"whoami":88}],"dht22":{"gpio":4,"ok":false}}')
+  assert.ok(!scanToComponents(s).map(c => c.type).includes('mpu6050'))
+})
+
+test('defaultLayout positions come from the registry, not a hardcoded table', () => {
+  const l = defaultLayout([{ type: 'dht22' }])
+  assert.deepEqual({ x: l.components[0].x, y: l.components[0].y }, { x: 90, y: 90 })
+})
+
+test('addComponent rejects an id the registry does not define', () => {
+  assert.throws(() => addComponent(defaultLayout([]), 'bmp280'), /Unknown component/)
+})
+
 test('scanNotice reports found components', () => {
   const s = parseScan('{"i2c":[{"addr":104,"name":"mpu6050"},{"addr":72,"name":null}],"dht22":{"gpio":4,"ok":true}}')
   assert.equal(scanNotice(s), 'SCAN: ESP32 + MPU6050, DHT22')

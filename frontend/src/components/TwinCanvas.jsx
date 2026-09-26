@@ -3,7 +3,7 @@
    Pure presentational: layout is owned by App via serialModel. */
 import { useState } from 'react'
 import ComponentSprite from './ComponentSprite'
-import { COMPONENTS } from '../serial/serialModel.mjs'
+import { allComponents, componentDef } from '../serial/serialModel.mjs'
 
 export default function TwinCanvas({ layout, live = {}, flags = [], onMove, onAdd, scanInfo = null }) {
   const [dragging, setDragging] = useState(null)
@@ -44,7 +44,7 @@ export default function TwinCanvas({ layout, live = {}, flags = [], onMove, onAd
         >
           <ComponentSprite type={c.type} />
           <div style={{ fontSize: 10, fontFamily: 'JetBrains Mono', color: 'var(--ot-ink)', textAlign: 'center' }}>
-            {COMPONENTS[c.type]?.label ?? c.type}
+            {componentDef(c.type)?.label ?? c.type}
           </div>
           {READING_OWNER[c.type]?.map(k => live[k] != null && (
               <div key={k} style={{ fontSize: 9, color: 'var(--ot-green)' }}>
@@ -75,8 +75,8 @@ export default function TwinCanvas({ layout, live = {}, flags = [], onMove, onAd
         style={{ position: 'absolute', right: 132, top: 12 }}
         aria-label="Add component type"
       >
-        {Object.entries(COMPONENTS).map(([k, v]) => (
-          <option key={k} value={k}>{v.label}</option>
+        {allComponents().map(c => (
+          <option key={c.id} value={c.id}>{c.label}</option>
         ))}
       </select>
       <button onClick={() => onAdd?.(addType)} className="btn-secondary" style={{ position: 'absolute', right: 12, top: 12 }}>

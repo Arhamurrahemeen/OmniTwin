@@ -1,14 +1,12 @@
 // Pure twin/scan model — no browser APIs, node-testable.
-// Component registry: known I2C address -> component, plus DHT22, ESP32, breadboard.
+// Component identity, geometry, and pins come from the data-driven registry
+// (src/registry/components.json), not from tables in this file.
 
-export const COMPONENTS = {
-  esp32:      { label: 'ESP32' },
-  breadboard: { label: 'Breadboard' },
-  mpu6050:    { label: 'MPU6050' },
-  dht22:      { label: 'DHT22' },
-}
+import { REGISTRY, allComponents, componentDef, isKnown, pinDef, resolveScanEntry, whoamiRequests } from '../registry/registry.mjs'
 
-const I2C_MAP = { 104: 'mpu6050', 105: 'mpu6050' }   // 0x68 / 0x69 (AD0 high)
+// Re-exported so UI modules have one import site for registry data.
+export { allComponents, componentDef, isKnown, pinDef, whoamiRequests }
+
 const SENSOR_RANGES = { temp: { max: 40 }, humidity: { min: 20, max: 90 }, vib: { max: 0.2 } }
 // Display labels for anomaly messages (readings keys are short wire names).
 const LABELS = { temp: 'temperature' }
@@ -41,47 +39,45 @@ export function withTimeout(promise, ms) {
 
 export function parseScan(line) {
   const raw = JSON.parse(line)
-  return raw // {i2c:[{addr,name}], dht22:{gpio,ok}}
+  return raw // {i2c:[{addr,whoami?}], dht22:{gpio,ok}}
 }
 
 export function scanToComponents(scan) {
-  const comps = [{ type: 'esp32' }, { type: 'breadboard' }]  // board answered IDENT, so these are always present
-  for (const { addr, name } of scan.i2c ?? []) {
-    const type = name === null ? null : I2C_MAP[addr] ?? name
-    if (type && COMPONENTS[type]) comps.push({ type })
+  // The board answered IDENT, so the `always` parts (board + breadboard) are present.
+  const comps = REGISTRY.always.map(c => ({ type: c.id }))
+  for (const entry of scan.i2c ?? []) {
+    const def = resolveScanEntry(entry)
+    if (def) comps.push({ type: def.id })
   }
-  if (scan.dht22?.ok) comps.push({ type: 'dht22' })
+  for (const def of REGISTRY.singleWire) {
+    if (scan[def.id]?.ok) comps.push({ type: def.id })
+  }
   return comps
 }
 
-const SENSOR_LABELS = { esp32: 'ESP32', breadboard: 'Breadboard' }
+const ALWAYS_IDS = new Set(REGISTRY.always.map(c => c.id))
 
 export function scanNotice(scan) {
   const sensors = scanToComponents(scan)
-    .filter(c => !(c.type in SENSOR_LABELS))
-    .map(c => COMPONENTS[c.type].label)
-  if (sensors.length) return `SCAN: ESP32 + ${sensors.join(', ')}`
+    .filter(c => !ALWAYS_IDS.has(c.type))
+    .map(c => componentDef(c.type).label)
+  if (sensors.length) return `SCAN: ${componentDef('esp32').label} + ${sensors.join(', ')}`
   return 'SCAN: ESP32 only — no sensors found (check 3V3/GND to each sensor)'
 }
 
-const DEFAULT_POS = {
-  esp32:      { x: 120, y: 300 },
-  breadboard: { x: 260, y: 180 },
-  mpu6050:    { x: 320, y: 90 },
-  dht22:      { x: 90,  y: 90 },
-}
+const fallbackPos = (i) => ({ x: 100 + i * 40, y: 100 + i * 40 })
 
 export function defaultLayout(components) {
   const comps = components.map((c, i) => {
-    const p = DEFAULT_POS[c.type] ?? { x: 100 + i * 40, y: 100 + i * 40 }
+    const p = componentDef(c.type)?.defaultPos ?? fallbackPos(i)
     return { id: nid(), type: c.type, x: p.x, y: p.y }
   })
   return { components: comps, wires: [] }
 }
 
 export function addComponent(layout, type) {
-  if (!COMPONENTS[type]) throw new Error(`Unknown component: ${type}`)
-  const p = DEFAULT_POS[type] ?? { x: 100, y: 100 }
+  if (!isKnown(type)) throw new Error(`Unknown component: ${type}`)
+  const p = componentDef(type).defaultPos
   return { ...layout, components: [...layout.components, { id: nid(), type, x: p.x, y: p.y }] }
 }
 

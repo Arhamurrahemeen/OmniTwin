@@ -1,0 +1,61 @@
+{
+  "$comment": "Single source of truth for component identity, sprite geometry, and pin kinds. Adding a sensor = an entry here, no firmware or JS change. whoamiReg/whoamiVal are hex strings matching the WHOAMI <addr> <reg> reply. kind drives wire color and the wiring-correctness check.",
+  "i2c": [
+    {
+      "id": "mpu6050",
+      "label": "MPU6050",
+      "candidateAddrs": [104, 105],
+      "whoamiReg": "0x75",
+      "whoamiVal": "0x68",
+      "reads": ["ax", "ay", "az"],
+      "size": { "w": 70, "h": 70 },
+      "defaultPos": { "x": 320, "y": 90 },
+      "pins": [
+        { "id": "VCC", "label": "VCC", "kind": "power", "dx": 12, "dy": 10 },
+        { "id": "GND", "label": "GND", "kind": "ground", "dx": 12, "dy": 60 },
+        { "id": "SDA", "label": "SDA", "kind": "signal", "dx": 58, "dy": 10 },
+        { "id": "SCL", "label": "SCL", "kind": "signal", "dx": 58, "dy": 60 }
+      ]
+    }
+  ],
+  "singleWire": [
+    {
+      "id": "dht22",
+      "label": "DHT22",
+      "reads": ["temp", "hum"],
+      "size": { "w": 70, "h": 70 },
+      "defaultPos": { "x": 90, "y": 90 },
+      "pins": [
+        { "id": "VCC", "label": "VCC", "kind": "power", "dx": 20, "dy": 18 },
+        { "id": "GND", "label": "GND", "kind": "ground", "dx": 20, "dy": 52 },
+        { "id": "DATA", "label": "DATA", "kind": "signal", "dx": 52, "dy": 35 }
+      ]
+    }
+  ],
+  "always": [
+    {
+      "id": "esp32",
+      "label": "ESP32",
+      "size": { "w": 120, "h": 90 },
+      "defaultPos": { "x": 120, "y": 300 },
+      "pins": [
+        { "id": "3V3", "label": "3V3", "kind": "power", "dx": 20, "dy": 6 },
+        { "id": "GND", "label": "GND", "kind": "ground", "dx": 20, "dy": 84 },
+        { "id": "SDA", "label": "SDA (GPIO21)", "kind": "signal", "dx": 60, "dy": 6, "gpio": 21 },
+        { "id": "SCL", "label": "SCL (GPIO22)", "kind": "signal", "dx": 60, "dy": 84, "gpio": 22 },
+        { "id": "DHT", "label": "GPIO4", "kind": "signal", "dx": 100, "dy": 6, "gpio": 4 }
+      ]
+    },
+    {
+      "id": "breadboard",
+      "label": "Breadboard",
+      "size": { "w": 200, "h": 90 },
+      "defaultPos": { "x": 260, "y": 180 },
+      "$comment": "ponytail: two rail pins only. A real pin-grid (rows x columns) is a v2 — nothing in this kit can detect which breadboard hole a jumper is in, so finer granularity would be modelled fiction.",
+      "pins": [
+        { "id": "VCC", "label": "+ rail", "kind": "power", "dx": 100, "dy": 20 },
+        { "id": "GND", "label": "- rail", "kind": "ground", "dx": 100, "dy": 70 }
+      ]
+    }
+  ]
+}
