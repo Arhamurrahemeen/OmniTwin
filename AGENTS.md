@@ -184,18 +184,27 @@ Playwright MCP server is configured with `--browser msedge` and
   Check them before re-litigating a past decision. The current spec for the
   universal-detection/canvas work is
   `docs/superpowers/specs/2026-09-26-omnitwin-universal-detection-canvas-design.md`.
-  Its successor — **proposed, not yet implemented** — is
+  Its successor — **proposed, and blocked on hardware verification** — is
   `docs/superpowers/specs/2026-09-26-omnitwin-universal-discovery-and-measurement-design.md`.
   **OmniTwin is a platform for debugging students' own semester projects, not a
-  sensor kit** — do not plan work from the parts list in `Cost-Structure.md`. That
-  spec makes OmniTwin a portable C library the student links into their own
-  program (they keep their firmware; ours cannot occupy the board too), targets
-  ESP32 + ATmega328P as two silicon ports behind one JSON dialect, and specifies a
-  channel-keyed stream as the core change. Read its §0, §2 and §10 before
-  starting discovery or firmware work.
+  sensor kit** — do not plan work from the parts list in `Cost-Structure.md`. It
+  handles two board classes through one dashboard: boards we can flash (we own
+  the bus) and boards we cannot (flight controllers, GPS, radio — we only read
+  what they volunteer). **§2.1 is a safety rule, not a style note: a client
+  adapter contains zero write commands, enforced by a grep test, because a wrong
+  write on a flight controller spins a motor.** Read §0, §2 and §3 before
+  touching discovery, adapters or firmware.
   (`.superpowers/sdd/` is git-ignored scratch — `*` in its own `.gitignore` —
   and holds only per-plan SDD artifacts: `plan-path`, `progress.md`, task briefs,
   review diffs. Never put a spec there; it will not be committed.)
+
+- **Identify an unknown board read-only, never by poking it:**
+  `firmware/probe_board.py <COMx>` reports what a board volunteers (omnitwin /
+  MSP / MAVLink / CRSF / NMEA) and writes **nothing**. Its classifier is tested
+  against synthetic frames with no hardware by `firmware/probe_board_test.py` —
+  the model to follow for any protocol-parsing code, since `proto_selftest` can
+  only run on flashed hardware.
+
 - Frontend assets are author-created SVG (`ComponentSprite.jsx`) — no icon library.
 - **Read `docs/superpowers/specs/2026-09-26-omnitwin-universal-detection-canvas-design.md`
   before touching `serialModel.mjs`, `ComponentSprite.jsx`, `TwinCanvas.jsx`, or
