@@ -74,8 +74,9 @@ conveyed through the JSON itself (`temp: null`, `ax: null`, `ok: false`). Do not
 re-enable logs on UART0.
 
 **`SCAN` needs a 20 s timeout.** The board sweeps I2C `0x03..0x77` (117
-addresses); on an empty bus that takes ~12 s. `App.jsx` passes `20000`
-explicitly. The 5 s default in `SerialSession.command()` is wrong for SCAN.
+addresses); on an empty bus that takes ~12 s. That budget now lives on the
+adapter as `scanTimeoutMs: 20000` — do not fall back to `command()`'s 5 s
+default for a scan.
 
 **The board degrades gracefully — that's intentional, not a bug.** With no
 sensors it still answers IDENT/PING/SCAN and streams DHT-only rows with
@@ -96,15 +97,19 @@ keep that test passing, and extend it to cover code content once the tutor
 starts sending file contents in the `/tutor` payload (same rule, bigger
 payload).
 
-**`I2C_MAP`/`COMPONENTS`/`DEFAULT_POS` in `serialModel.mjs` are being replaced
-by a data-driven registry** (`components.json`) per the spec below. If you're
-adding a new sensor, that's a registry entry, not a new `case` in
-`ComponentSprite.jsx` or a new line in `I2C_MAP` — those are going away.
+**The hardcoded `I2C_MAP`/`COMPONENTS`/`DEFAULT_POS` tables and the
+`ComponentSprite` `switch` are GONE** — replaced by the data-driven registry in
+`frontend/src/registry/` (landed on `feat/universal-detection-canvas`). Adding a
+sensor is a `components.json` entry: label, geometry, pin kinds, and which
+readings belong to it. Do not reintroduce a per-type table anywhere; the canvas
+reads pins and `reads` from the registry.
 
-**The current serial protocol table (below) is the only board adapter today.**
-The spec below turns it into the first entry in an adapter list. Don't write
-new code elsewhere that assumes "there is exactly one protocol" once that
-lands.
+**`frontend/src/serial/adapters/twinlab_esp32_v1.js` is the one board adapter
+today**, and `detectAdapter()` in `serialModel.mjs` probes each adapter's IDENT
+dialect in turn over a single already-open port (Web Serial bakes `baudRate` in
+at `open()` and has no `setBaudRate`). Don't write new code that assumes one
+protocol. `TwinCanvas` currently imports the adapter directly for
+`referenceWiring` — pass it down from `App.jsx` when adapter #2 lands.
 
 **Canvas current-flow visualization is illustrative, not a simulation.** It
 color-codes wires by pin `kind` (power/ground/signal) using each board's known
@@ -116,7 +121,8 @@ There's no current sensor in the kit; don't build toward one.
 | Command | Reply |
 |---|---|
 | `IDENT` | `{"device","fw","board","id"}` — id is `TL-` + 6 hex from MAC |
-| `SCAN` | `{"i2c":[{"addr","name"}],"dht22":{"gpio","ok"},"bus":{...}}` |
+| `SCAN` | `{"i2c":[{"addr"}],"dht22":{"gpio","ok"},"bus":{...}}` — raw ACK'd addresses only, **no part name**: identity is the browser's job (fw 1.1) |
+| `WHOAMI <addr> <reg>` | `{"whoami":<int>}`, or `-1` if the address did not answer. The browser supplies the register from `components.json`, so firmware holds no per-sensor knowledge |
 | `STREAM on` / `off` | ack, then ~10 Hz `{"ts","temp","hum","ax","ay","az"}` |
 | `PING` | `{"pong":true}` |
 | `DIAG` | pull-up state, per-address probe, MPU register readbacks |
@@ -180,8 +186,9 @@ Playwright MCP server is configured with `--browser msedge` and
   0.0.0.0`. Fine on loopback, unsafe on a LAN. Fix before the DUET pilot.
 - `sim-control/` is dead — `git rm`'d in `5fa29bb`, but `dist/` and
   `node_modules/` may still linger untracked. Safe to delete.
-- Wire *drawing* on the canvas is model-ready (`addWire` + dashed SVG) but has
-  no click-drag gesture in the UI yet.
+- Wire *drawing* now exists: click a pin, then a pin on another part, to wire
+  them; click a wired pin to detach. Wires are pin-referenced, not centre-to-
+  centre, and `wiringFlags()` catches kind mismatches. Still no zoom/pan/rotate.
 - `ruff check .` currently reports ~57 findings (mostly `Optional[X]` →
   `X | None` in `backend/models/device.py`). None are bugs; they are unfixed
   because they were never in scope.

@@ -15,9 +15,10 @@ export default function TwinCanvas({ layout, live = {}, sensorFlags = [], onMove
   const [armed, setArmed] = useState(null)   // { componentId, pinId } awaiting its partner
   const [showReference, setShowReference] = useState(false)
 
-  // Which readings belong to which component — a sensor's values render only on
-  // its own sprite, not on every ESP/breadboard duplicate.
-  const READING_OWNER = { dht22: ['temp', 'hum'], mpu6050: ['ax', 'ay', 'az'] }
+  // A sensor's values render only on its own sprite, not on every ESP/breadboard
+  // duplicate. Driven by the registry's `reads` field, so adding a sensor stays
+  // a one-file JSON edit.
+  const readsFor = (type) => componentDef(type)?.reads ?? []
 
   const onPointerDown = (c) => (e) => {
     e.stopPropagation()
@@ -72,7 +73,7 @@ export default function TwinCanvas({ layout, live = {}, sensorFlags = [], onMove
           <div style={{ fontSize: 10, fontFamily: 'JetBrains Mono', color: 'var(--ot-ink)', textAlign: 'center' }}>
             {componentDef(c.type)?.label ?? c.type}
           </div>
-          {READING_OWNER[c.type]?.map(k => live[k] != null && (
+          {readsFor(c.type).map(k => live[k] != null && (
               <div key={k} style={{ fontSize: 9, color: 'var(--ot-green)' }}>
                 {k}: {typeof live[k] === 'number' ? live[k].toFixed(1) : '--'}
               </div>

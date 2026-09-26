@@ -126,6 +126,41 @@ test('detectComponents asks only for addresses the registry can identify', async
   assert.deepEqual(asked, [[104, 0x75]])
 })
 
+// SerialSession allows exactly one outstanding command and throws otherwise.
+// Probing two addresses concurrently therefore drops every probe after the
+// first, silently — the address fallback then masks it and a wrong chip at
+// address 2+ still renders. Probes must be sequential.
+test('detectComponents probes sequentially when several addresses are identifiable', async () => {
+  const inFlight = new Set()
+  let thrown = 0
+  const strictSession = {
+    command: async (cmd) => {
+      if (inFlight.size) { thrown++; throw new Error('Command already in flight') }
+      inFlight.add(cmd)
+      try { await new Promise(r => setTimeout(r, 1)); return { whoami: 0x68 } }
+      finally { inFlight.delete(cmd) }
+    },
+  }
+  // Two addresses the registry can identify: 0x68 and 0x69 are both mpu6050.
+  const scan = { i2c: [{ addr: 104 }, { addr: 105 }], dht22: { gpio: 4, ok: false } }
+  const asked = []
+  await detectComponents(scan, async (addr, reg) => {
+    asked.push([addr, reg])
+    return strictSession.command(`WHOAMI ${addr} ${reg}`)
+  })
+  assert.deepEqual(asked, [[104, 0x75], [105, 0x75]])
+  assert.equal(thrown, 0, 'a probe was dropped by the one-command-in-flight guard')
+})
+
+test('detectComponents composes the 1.0 path: a probe that answers null keeps the legacy name', async () => {
+  // The real 1.0 composition is a `whoami` key that is PRESENT and NULL, not
+  // an absent key. Nothing pinned that, and a future edit to the tier order
+  // would silently break every unreflashed board.
+  const scan = { i2c: [{ addr: 104, name: 'mpu6050' }, { addr: 72, name: null }], dht22: { gpio: 4, ok: true } }
+  const types = (await detectComponents(scan, async () => null)).map(c => c.type)
+  assert.deepEqual(types.sort(), ['breadboard', 'dht22', 'esp32', 'mpu6050'])
+})
+
 // A port that opens but never speaks: the reader never yields, so every command
 // times out. Enough of a fake to exercise SerialSession's own plumbing.
 const silentPort = () => ({
@@ -151,5 +186,30 @@ test('detectAdapter survives a real SerialSession where every probe times out', 
   // throw 'Command already in flight' instead of timing out, and the error
   // would name the wrong thing entirely.
   assert.equal(await detectAdapter(s, [alpha, beta]), null)
+  await s.close()
+})
+
+// A board that answers LATE (slow IDENT, still enumerating) must not have its
+// stale reply handed to the next command: adapter 1's late IDENT would resolve
+// adapter 2's probe, identifying a board as the wrong dialect.
+test('a reply arriving after its command timed out is discarded, not given to the next command', async () => {
+  const enc = new TextEncoder()
+  let pushLine = null
+  const latePort = {
+    open: async () => {},
+    close: async () => {},
+    readable: { getReader: () => ({ read: () => new Promise(r => { pushLine = (v) => r({ value: enc.encode(v), done: false }) }), cancel: async () => {} }) },
+    writable: { getWriter: () => ({ write: async () => {}, close: async () => {} }) },
+  }
+  const s = new SerialSession({ port: latePort, onData: () => {} })
+  await s.open()
+  await assert.rejects(s.command('IDENT', 30), /timeout/i)
+  // The next command starts waiting FIRST, then the board finally answers the
+  // already-abandoned IDENT. That stale reply must be dropped, not handed to
+  // the waiting command as its result.
+  const next = s.command('SCAN', 60).then(() => 'resolved', (e) => `rejected: ${e.message}`)
+  await new Promise(r => setTimeout(r, 10))
+  pushLine('{"id":"TL-LATE","board":"twinlab-node","fw":"1.1"}\n')
+  assert.match(await next, /^rejected: /, 'the stale IDENT reply was delivered as the SCAN result')
   await s.close()
 })

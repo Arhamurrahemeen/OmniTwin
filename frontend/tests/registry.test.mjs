@@ -62,6 +62,22 @@ test('whoamiRequests is empty when the bus is empty', () => {
   assert.deepEqual(whoamiRequests({ i2c: [] }), [])
 })
 
+test('a legacy name resolves against the I2C table only', () => {
+  // A firmware claiming "esp32" on a bus scan must not conjure a board sprite.
+  assert.equal(resolveScanEntry({ addr: 104, name: 'esp32' }), null)
+  assert.equal(resolveScanEntry({ addr: 104, name: 'dht22' }), null)
+})
+
+test('whoamiReg and whoamiVal must be 0x-prefixed hex', () => {
+  // parseInt(s, 16) silently reinterprets a decimal literal: "75" would become
+  // 117 (0x75) and probe the wrong register, dropping the part from the canvas.
+  for (const e of REGISTRY.i2c) {
+    for (const f of ['whoamiReg', 'whoamiVal']) {
+      if (e[f] !== undefined) assert.match(e[f], /^0x[0-9a-f]+$/i, `${e.id}.${f} = ${e[f]}`)
+    }
+  }
+})
+
 test('componentDef and isKnown agree on the four seeded parts', () => {
   for (const c of allComponents()) assert.equal(isKnown(c.id), true)
   assert.equal(componentDef('bmp280'), null)

@@ -63,6 +63,9 @@ export default function App() {
     const closeSession = async () => {
       const s = sessionRef.current
       sessionRef.current = null
+      // Tell the board to stop streaming before dropping the port — otherwise it
+      // keeps pushing 10 Hz of JSON at 115200 until the board is unplugged.
+      try { if (s?.writer) await s.command(activeAdapter.streamOffCommand, 500) } catch { /* already gone */ }
       await s?.close()
     }
     try {
@@ -94,10 +97,14 @@ export default function App() {
         // Spec 3.1 step 4: no board-profile picker. The canvas with "+ Add
         // component" already IS the manual path, so drop into it rather than
         // hard-erroring — the student may have their own sketch on the port.
+        // Release the port first: we are about to tell them to flash the board
+        // and reconnect, and no flashing tool can open a port we still hold.
+        await closeSession()
         setStatus('manual')
         setNoFirmware(true)
         setScanInfo('No OmniTwin firmware answered on this port — build the rig by hand.')
-        setLayout(defaultLayout([]))
+        // Do NOT wipe a rig the student already placed by hand.
+        setLayout(prev => (prev.components.length ? prev : defaultLayout([])))
         return
       }
       const adapter = found.adapter
@@ -194,6 +201,9 @@ export default function App() {
                 <p className="empty-state" style={{ fontSize: 11 }}>
                   No OmniTwin firmware answered on this port. Add components by hand below, or
                   flash the node firmware and reconnect.
+                  <button onClick={connect} className="btn-secondary" style={{ marginLeft: 8 }}>
+                    Retry connection
+                  </button>
                 </p>
               )}
               <TwinCanvas layout={layout} live={live} sensorFlags={sensorFlags}

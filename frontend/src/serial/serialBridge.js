@@ -46,6 +46,11 @@ export class SerialSession {
   _dispatch(line) {
     let obj
     try { obj = JSON.parse(line) } catch { return }   // ignore noise
+    // A reply to a command that already timed out is stale. Drop exactly one
+    // such line, otherwise a slow board's late IDENT would be handed to the
+    // NEXT command as its result (identifying it as the wrong dialect, or
+    // handing a SCAN an IDENT reply).
+    if (this._discardOne) { this._discardOne = false; return }
     if (obj && this._resolver) {
       const resolver = this._resolver
       this._resolver = null
@@ -60,6 +65,8 @@ export class SerialSession {
     if (!this.writer) throw new Error('Serial session not open')
     if (this._resolver) throw new Error('Command already in flight')
     const reply = new Promise((resolve) => { this._resolver = resolve })
+    let settled = false
+    reply.then(() => { settled = true }, () => { settled = true })
     try {
       await this.writer.write(new TextEncoder().encode(cmd + '\n'))
       return await withTimeout(reply, timeoutMs)
@@ -67,6 +74,8 @@ export class SerialSession {
       // Release the slot on BOTH paths. Without this a timed-out command
       // poisons the session and every later command throws 'Command already in
       // flight' — which is exactly what adapter probing does on a dead port.
+      // If it timed out, the board may still answer: discard that one line.
+      this._discardOne = !settled
       this._resolver = null
     }
   }

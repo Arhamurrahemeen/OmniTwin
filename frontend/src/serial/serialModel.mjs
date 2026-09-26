@@ -200,15 +200,21 @@ export async function detectAdapter(session, adapters) {
 // Resolve a SCAN reply into components, asking the board to read each
 // identifiable address's WHOAMI register first. `askWhoami` is injected so this
 // stays free of Web Serial and testable with a stub. A probe that fails leaves
-// `whoami` absent, which falls back to address resolution — so an unreflashed
+// `whoami` null, which falls back to name/address resolution — so an unreflashed
 // 1.0 board still detects.
+//
+// Probes are SEQUENTIAL on purpose: SerialSession allows one outstanding
+// command, so firing them concurrently makes every probe after the first throw
+// "Command already in flight" and get silently swallowed — the fallback would
+// then mask it and mislabel a chip.
 export async function detectComponents(scan, askWhoami) {
   const regs = new Map(whoamiRequests(scan).map(r => [r.addr, r.reg]))
-  const entries = await Promise.all((scan.i2c ?? []).map(async (e) => {
-    if (!regs.has(e.addr)) return e
-    try { return { ...e, whoami: await askWhoami(e.addr, regs.get(e.addr)) } }
-    catch { return e }
-  }))
+  const entries = []
+  for (const e of scan.i2c ?? []) {
+    if (!regs.has(e.addr)) { entries.push(e); continue }
+    try { entries.push({ ...e, whoami: await askWhoami(e.addr, regs.get(e.addr)) }) }
+    catch { entries.push(e) }
+  }
   return scanToComponents({ ...scan, i2c: entries })
 }
 

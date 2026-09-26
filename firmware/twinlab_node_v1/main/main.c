@@ -3,8 +3,11 @@
  * Line-driven JSON protocol over UART0 (the USB bridge's console line), so a
  * browser using the Web Serial API opens the same COM port the flasher uses.
  *
- *   IDENT      -> {"device":"ESP32","fw":"1.0","board":"twinlab-node","id":"TL-XXXXXX"}
- *   SCAN       -> {"i2c":[{"addr":104,"name":"mpu6050"}],"dht22":{"gpio":4,"ok":true}}
+ *   IDENT      -> {"device":"ESP32","fw":"1.1","board":"twinlab-node","id":"TL-XXXXXX"}
+ *   SCAN       -> {"i2c":[{"addr":104}],"dht22":{"gpio":4,"ok":true}}   (raw addrs; the
+ *                  browser resolves part identity via WHOAMI + its registry)
+ *   WHOAMI a r -> {"whoami":<int>} or -1. The browser supplies the register, so
+ *                  firmware holds no per-sensor knowledge.
  *   STREAM on  -> {"stream":"on"}  then ~10 Hz  {"ts","temp","hum","ax","ay","az"}
  *   STREAM off -> {"stream":"off"} (stops the stream)
  *   PING       -> {"pong":true}
@@ -78,7 +81,7 @@ static cmd_t parse_cmd(const char *line)   /* see proto_selftest */
     else if (strcmp(line, "STREAM off") == 0)return CMD_STREAM_OFF;
     else if (strcmp(line, "PING") == 0)      return CMD_PING;
     else if (strcmp(line, "DIAG") == 0)      return CMD_DIAG;
-    else if (strncmp(line, "WHOAMI", 6) == 0) return CMD_WHOAMI;
+    else if (strncmp(line, "WHOAMI ", 7) == 0) return CMD_WHOAMI;
     return CMD_NONE;
 }
 

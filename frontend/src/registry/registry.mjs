@@ -27,16 +27,20 @@ const byWhoami = (addr, whoami) =>
   REGISTRY.i2c.find(e => e.candidateAddrs.includes(addr) && hex(e.whoamiVal) === whoami) ?? null
 
 // Two tiers, and they are NOT interchangeable. A whoami byte read off the chip
-// is authoritative: if the board reports one, it decides the answer outright.
-// Otherwise 1.0 firmware's `name` is honoured — and an explicit `null` there is
-// meaningful: the board scanned that address and could not identify it, so it
-// must NOT become a phantom component. Only when the field is absent altogether
-// (1.1 firmware omits it) do we fall back to the address.
+// is authoritative: if the board reports one, nothing else can override it —
+// though it must still agree on the address, so a chip answering 0x68 that is
+// NOT on an MPU's address is not claimed as one. Otherwise 1.0 firmware's
+// `name` is honoured — and an explicit `null` there is meaningful: the board
+// scanned that address and could not identify it, so it must NOT become a
+// phantom component. Only when the field is absent altogether (1.1 firmware
+// omits it) do we fall back to the address.
 export function resolveScanEntry(entry) {
   const { addr, whoami, name } = entry ?? {}
   if (typeof whoami === 'number') return byWhoami(addr, whoami)
   if (name === null) return null
-  if (name !== undefined) return allComponents().find(c => c.id === name) ?? null
+  // A legacy name names an I2C part, so resolve it against the I2C table only —
+  // a firmware that said "esp32" must not conjure a board sprite out of a scan.
+  if (name !== undefined) return REGISTRY.i2c.find(e => e.id === name) ?? null
   return REGISTRY.i2c.find(e => e.candidateAddrs.includes(addr)) ?? null
 }
 

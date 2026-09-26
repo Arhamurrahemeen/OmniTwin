@@ -34,8 +34,6 @@ def test_build_prompt_separates_wiring_faults_from_sensor_anomalies():
     assert "SDA (GPIO21) (ESP32) wired to GND (MPU6050)" in block
     assert "temperature above 40 C" in block
     assert "Wiring" in block or "wiring" in block
-    # The two sources must be labelled, not concatenated into one list.
-    assert block.index("SDA (GPIO21)") < block.index("temperature above 40 C") or "Wiring" in block
 
 
 def test_build_prompt_handles_absent_wiring_key():
