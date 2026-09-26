@@ -3,15 +3,17 @@
    Pure presentational: layout is owned by App via serialModel. */
 import { useState } from 'react'
 import ComponentSprite from './ComponentSprite'
-import { allComponents, componentDef, pinDef, pinPos, wiresFor } from '../serial/serialModel.mjs'
+import { allComponents, componentDef, pinDef, pinPos, wiresFor, wireStroke, referenceGhosts, wiringFaults } from '../serial/serialModel.mjs'
+import ADAPTER from '../serial/adapters/twinlab_esp32_v1'
 
 // Pin dot colour by kind — the same convention the wire stroke uses.
 const PIN_COLOR = { power: 'var(--ot-power)', ground: 'var(--ot-ground)', signal: 'var(--ot-green)' }
 
-export default function TwinCanvas({ layout, live = {}, flags = [], onMove, onAdd, onWire, onUnwire, scanInfo = null }) {
+export default function TwinCanvas({ layout, live = {}, sensorFlags = [], onMove, onAdd, onWire, onUnwire, scanInfo = null }) {
   const [dragging, setDragging] = useState(null)
   const [addType, setAddType] = useState('breadboard')
   const [armed, setArmed] = useState(null)   // { componentId, pinId } awaiting its partner
+  const [showReference, setShowReference] = useState(false)
 
   // Which readings belong to which component — a sensor's values render only on
   // its own sprite, not on every ESP/breadboard duplicate.
@@ -45,6 +47,12 @@ export default function TwinCanvas({ layout, live = {}, flags = [], onMove, onAd
 
   const compById = (id) => layout.components.find(x => x.id === id)
 
+  // A wiring fault belongs to the two parts it connects, so badge only those.
+  // Sensor anomalies stay global: a temperature reading is not attributable to
+  // one sprite from the flag string alone.
+  const wiringBad = new Set(
+    wiringFaults(layout.wires, layout.components).flatMap(f => f.componentIds))
+
   return (
     <div
       className="twin-canvas"
@@ -69,7 +77,11 @@ export default function TwinCanvas({ layout, live = {}, flags = [], onMove, onAd
                 {k}: {typeof live[k] === 'number' ? live[k].toFixed(1) : '--'}
               </div>
             ))}
-          {flags.length > 0 && <div style={{ color: 'var(--ot-orange)', fontSize: 9 }}>⚠ anomaly</div>}
+          {(wiringBad.has(c.id) || sensorFlags.length > 0) && (
+            <div style={{ color: 'var(--ot-orange)', fontSize: 9, maxWidth: 160 }}>
+              {wiringBad.has(c.id) ? '⚠ wiring' : '⚠ anomaly'}
+            </div>
+          )}
         </div>
       ))}
 
@@ -96,16 +108,29 @@ export default function TwinCanvas({ layout, live = {}, flags = [], onMove, onAd
         )
       }))}
 
+      {showReference && referenceGhosts(layout, ADAPTER.referenceWiring).map((g, i) => (
+        <svg key={`ghost${i}`} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} width="100%" height="100%">
+          <line
+            x1={g.from.x} y1={g.from.y} x2={g.to.x} y2={g.to.y}
+            stroke="var(--ot-ink)" strokeWidth="1" strokeDasharray="2 4" opacity="0.5"
+          />
+        </svg>
+      ))}
+
       {layout.wires.map(w => {
         const fc = compById(w.fromComponentId), tc = compById(w.toComponentId)
-        if (!fc || !tc || !pinDef(fc.type, w.fromPinId) || !pinDef(tc.type, w.toPinId)) return null
+        const fromPin = pinDef(fc?.type, w.fromPinId), toPin = pinDef(tc?.type, w.toPinId)
+        // A wire whose part or pin is gone is skipped, not drawn to (0,0). The
+        // wire itself is still real, so an unknown kind falls back to signal.
+        if (!fc || !tc || !fromPin || !toPin) return null
         const from = pinPos(fc, w.fromPinId)
         const to = pinPos(tc, w.toPinId)
+        const s = wireStroke(fromPin.kind)
         return (
           <svg key={w.id} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} width="100%" height="100%">
             <line
               x1={from.x} y1={from.y} x2={to.x} y2={to.y}
-              stroke="var(--ot-green)" strokeWidth="3" strokeDasharray="6 4"
+              stroke={s.stroke} strokeWidth="3" strokeDasharray={s.dash ?? undefined}
             />
           </svg>
         )
@@ -122,6 +147,11 @@ export default function TwinCanvas({ layout, live = {}, flags = [], onMove, onAd
           <option key={c.id} value={c.id}>{c.label}</option>
         ))}
       </select>
+      <button onClick={() => setShowReference(v => !v)} className="btn-secondary"
+        title="This board's fixed pin configuration as the firmware defines it — not a read of the physical jumper wires. Nothing in the kit can detect which breadboard hole a wire sits in."
+        style={{ position: 'absolute', right: 152, top: 12 }}>
+        {showReference ? 'Hide' : 'Show'} reference wiring
+      </button>
       <button onClick={() => onAdd?.(addType)} className="btn-secondary" style={{ position: 'absolute', right: 12, top: 12 }}>
         + Add component
       </button>

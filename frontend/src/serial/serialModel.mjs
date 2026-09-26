@@ -123,6 +123,65 @@ export function wiresFor(layout, componentId, pinId) {
     (w.toComponentId === componentId && w.toPinId === pinId))
 }
 
+// Wire colour is a TEACHING LABEL, not a measurement: power / ground / signal.
+// Nothing in the kit can measure voltage or current.
+const STROKES = {
+  power:  { stroke: 'var(--ot-power)', dash: null },
+  ground: { stroke: 'var(--ot-ground)', dash: null },
+  signal: { stroke: 'var(--ot-green)', dash: '6 4' },
+}
+export function wireStroke(kind) {
+  return STROKES[kind] ?? STROKES.signal
+}
+
+// Cheap local wiring check — zero LLM cost, same spirit as anomalyFlags().
+// The rule is one comparison: differing pin kinds is a wiring error. A signal
+// pin in a ground pin is the commonest mistake this catches, and it is the
+// only kind mismatch the current registry can express.
+//
+// Structured form: unlike a sensor anomaly, a wiring fault belongs to specific
+// parts, so the canvas can badge those two sprites instead of the whole board.
+export function wiringFaults(wires, components) {
+  const byId = new Map(components.map(c => [c.id, c]))
+  const end = (cid, pid) => {
+    const comp = byId.get(cid)
+    const pin = pinDef(comp?.type, pid)
+    return pin ? { id: cid, label: componentDef(comp.type).label, pin } : null
+  }
+  const faults = []
+  for (const w of wires) {
+    const a = end(w.fromComponentId, w.fromPinId)
+    const b = end(w.toComponentId, w.toPinId)
+    if (!a || !b) continue   // a wire to something no longer on the canvas
+    if (a.pin.kind !== b.pin.kind)
+      faults.push({
+        message: `${a.pin.label} (${a.label}) wired to ${b.pin.label} (${b.label})`,
+        componentIds: [a.id, b.id],
+      })
+  }
+  return faults
+}
+
+export function wiringFlags(wires, components) {
+  return wiringFaults(wires, components).map(f => f.message)
+}
+
+// The adapter's authored reference wiring, resolved to screen points for the
+// ghost overlay. The pairs name component TYPES (there is one of each in a kit)
+// while the layout holds instances, so resolve by type. Ends whose part is not
+// on the canvas are dropped.
+export function referenceGhosts(layout, referenceWiring) {
+  const byType = new Map(layout.components.map(c => [c.type, c]))
+  const ghosts = []
+  for (const w of referenceWiring ?? []) {
+    const [ft, fp] = w.from, [tt, tp] = w.to
+    const f = byType.get(ft), t = byType.get(tt)
+    if (!f || !t || !pinDef(f.type, fp) || !pinDef(t.type, tp)) continue
+    ghosts.push({ from: pinPos(f, fp), to: pinPos(t, tp) })
+  }
+  return ghosts
+}
+
 // Try each board adapter's IDENT dialect in turn and take the first that
 // answers. A losing adapter never receives a SCAN or STREAM — only IDENT.
 export async function detectAdapter(session, adapters) {

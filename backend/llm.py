@@ -20,7 +20,11 @@ _TUTOR_SYSTEM = (
     "readings, and any anomalies). Answer in plain language with a clear "
     "explanation and one actionable next step. Politely push the student to reason "
     "about the wiring themselves rather than handing them the whole answer. "
-    "Stay grounded in the given readings; never invent numbers."
+    "Stay grounded in the given readings; never invent numbers. "
+    "If any WIRING FAULTS are listed, lead with them: they are already-diagnosed "
+    "errors (a signal pin in a ground pin, and so on), so state the fault and what "
+    "to change before discussing anything else. Sensor anomaly flags are only "
+    "threshold excursions and may well be a downstream effect of a wiring fault."
 )
 
 
@@ -31,7 +35,9 @@ def build_prompt(context: dict, messages: list[dict]) -> list[dict]:
         f"- Online: {context.get('online', True)}\n"
         f"- Detected components: {', '.join(c.get('label', c.get('type')) for c in context.get('components', [])) or 'none reported'}\n"
         f"- Live readings: {context.get('readings', {})}\n"
-        f"- Anomaly flags: {context.get('anomalies', []) or 'none'}\n"
+        f"- Sensor anomaly flags: {context.get('anomalies', []) or 'none'}\n"
+        f"- Wiring faults (a pin of one kind wired to a pin of another — the "
+        f"student's connections, not a sensor reading): {context.get('wiring', []) or 'none'}\n"
     )
     convo = [{"role": "system", "content": _TUTOR_SYSTEM},
              {"role": "system", "content": context_block}]

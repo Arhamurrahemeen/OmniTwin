@@ -3,6 +3,7 @@ import assert from 'node:assert'
 import {
   readLine, parseScan, scanToComponents, defaultLayout,
   addComponent, moveComponent, addWire, removeWire, pinPos, wiresFor,
+  wiringFlags, wiringFaults, wireStroke, referenceGhosts,
   anomalyFlags, withTimeout, scanNotice,
 } from '../src/serial/serialModel.mjs'
 
@@ -177,6 +178,84 @@ test('removeWire drops only the named wire', () => {
   const wired = addWire(l, esp.id, 'SDA', mpu.id, 'SDA')
   assert.equal(removeWire(wired, wired.wires[0].id).wires.length, 0)
   assert.equal(wired.wires.length, 1)   // original untouched
+})
+
+// --- wiring correctness (Task 6) ---
+
+test('wiringFlags is empty for a correctly wired rig', () => {
+  const l = defaultLayout([{ type: 'esp32' }, { type: 'mpu6050' }])
+  const [esp, mpu] = l.components
+  const w = addWire(
+    addWire(addWire(l, esp.id, 'SDA', mpu.id, 'SDA'),
+                esp.id, 'SCL', mpu.id, 'SCL'),
+                esp.id, '3V3', mpu.id, 'VCC')
+  assert.deepEqual(wiringFlags(w.wires, w.components), [])
+})
+
+test('wiringFlags names both ends of a signal-to-ground wire', () => {
+  const l = defaultLayout([{ type: 'esp32' }, { type: 'mpu6050' }])
+  const [esp, mpu] = l.components
+  const w = addWire(l, esp.id, 'SDA', mpu.id, 'GND')
+  const flags = wiringFlags(w.wires, w.components)
+  assert.equal(flags.length, 1)
+  assert.match(flags[0], /SDA \(GPIO21\)/)
+  assert.match(flags[0], /GND/)
+  assert.match(flags[0], /MPU6050/)
+})
+
+test('wiringFaults attributes each fault to the parts actually involved', () => {
+  // A wiring fault IS attributable to specific parts, so the canvas can badge
+  // the MPU and the ESP32 rather than every sprite on the board.
+  const l = defaultLayout([{ type: 'esp32' }, { type: 'mpu6050' }, { type: 'breadboard' }])
+  const [esp, mpu, bb] = l.components
+  const w = addWire(l, esp.id, 'SDA', mpu.id, 'GND')
+  const faults = wiringFaults(w.wires, w.components)
+  assert.equal(faults.length, 1)
+  assert.deepEqual(faults[0].componentIds.sort(), [esp.id, mpu.id].sort())
+  assert.ok(!faults[0].componentIds.includes(bb.id), 'the uninvolved breadboard must not be badged')
+  assert.equal(faults[0].message, wiringFlags(w.wires, w.components)[0])
+})
+
+test('wiringFlags catches a power-to-ground short', () => {
+  const l = defaultLayout([{ type: 'esp32' }, { type: 'mpu6050' }])
+  const [esp, mpu] = l.components
+  const w = addWire(l, esp.id, '3V3', mpu.id, 'GND')
+  assert.equal(wiringFlags(w.wires, w.components).length, 1)
+})
+
+test('wiringFlags flags power-to-power as correct', () => {
+  const l = defaultLayout([{ type: 'esp32' }, { type: 'breadboard' }])
+  const [esp, bb] = l.components
+  const w = addWire(l, esp.id, '3V3', bb.id, 'VCC')
+  assert.deepEqual(wiringFlags(w.wires, w.components), [])
+})
+
+test('wiringFlags skips a wire whose component is not on the canvas', () => {
+  const l = defaultLayout([{ type: 'esp32' }, { type: 'mpu6050' }])
+  const [esp, mpu] = l.components
+  const w = addWire(l, esp.id, 'SDA', mpu.id, 'GND')
+  assert.deepEqual(wiringFlags(w.wires, [{ ...esp, type: 'esp32' }]), [])   // mpu absent
+})
+
+test('wireStroke colors power red-solid, ground gray-solid, signal green-dashed', () => {
+  assert.equal(wireStroke('power').dash, null)
+  assert.equal(wireStroke('ground').dash, null)
+  assert.equal(wireStroke('signal').dash, '6 4')
+  assert.notEqual(wireStroke('power').stroke, wireStroke('signal').stroke)
+  assert.notEqual(wireStroke('ground').stroke, wireStroke('signal').stroke)
+  // An unknown kind falls back to the signal style rather than disappearing.
+  assert.deepEqual(wireStroke('bogus'), wireStroke('signal'))
+})
+
+test('referenceGhosts resolves the adapter wiring and skips parts that are not placed', async () => {
+  const { default: ADAPTER } = await import('../src/serial/adapters/twinlab_esp32_v1.js')
+  const l = defaultLayout([{ type: 'esp32' }, { type: 'mpu6050' }])
+  const [esp, mpu] = l.components
+  const ghosts = referenceGhosts(l, ADAPTER.referenceWiring)
+  // SDA and SCL both resolve; the DHT->DATA pair is skipped because dht22 is not placed.
+  assert.equal(ghosts.length, 2)
+  assert.deepEqual(ghosts[0].from, { x: esp.x + 60, y: esp.y + 6 })
+  assert.deepEqual(ghosts[0].to, { x: mpu.x + 58, y: mpu.y + 10 })
 })
 
 test('anomalyFlags flags NaN, out-of-range, frozen stream', () => {

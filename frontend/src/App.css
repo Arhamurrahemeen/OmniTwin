@@ -4,6 +4,10 @@
   --ot-ink:    #04342C;   /* text / dark UI */
   --ot-paper:  #F1EFE8;   /* neutral background */
   --ot-orange: #D85A30;   /* kit orange — student-facing accents only */
+  /* Wire/pin kind colours. A TEACHING LABEL, not a measurement — nothing in the
+     kit can measure voltage or current. */
+  --ot-power:  #C62828;   /* power rail */
+  --ot-ground: #37474F;   /* ground rail */
 }
 
 /* ─── App shell ──────────────────────────────────────────── */

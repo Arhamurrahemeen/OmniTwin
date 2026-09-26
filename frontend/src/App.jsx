@@ -1,5 +1,5 @@
 /* OmniTwin dashboard: connect USB board (Web Serial) -> scan -> twin canvas + tutor. */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import TwinCanvas from './components/TwinCanvas'
 import TutorPanel from './components/TutorPanel'
 import { supportsSerial, requestPort, SerialSession } from './serial/serialBridge'
@@ -7,7 +7,7 @@ import { DemoSession } from './serial/demoSession.mjs'
 import ADAPTER from './serial/adapters/twinlab_esp32_v1'
 import {
   defaultLayout, parseScan, detectAdapter, detectComponents, scanNotice,
-  addComponent, moveComponent, addWire, removeWire, anomalyFlags,
+  addComponent, moveComponent, addWire, removeWire, anomalyFlags, wiringFlags, componentDef,
 } from './serial/serialModel.mjs'
 import { askTutor } from './api'
 import wordmark from './assets/wordmark.png'
@@ -36,18 +36,26 @@ export default function App() {
   const [status, setStatus] = useState('needPort') // needPort|connecting|scanning|streaming|manual|error
   const [layout, setLayout] = useState(() => defaultLayout([]))
   const [live, setLive] = useState({})
-  const [flags, setFlags] = useState([])
+  const [sensorFlags, setSensorFlags] = useState([])
   const [device, setDevice] = useState(null)   // { id, board, fw }
   const [tutor, setTutor] = useState(null)     // { messages, reply, error, sessionId }
   const [scanInfo, setScanInfo] = useState(null) // result of the last SCAN, shown on the canvas
   const [noFirmware, setNoFirmware] = useState(false)
   const sessionRef = useRef(null)
 
+  // Sensor flags change ~10x/sec; wiring faults change only when the layout
+  // does. Keeping them apart stops the tutor context being rebuilt — and
+  // re-sent — on every stream frame or every drag of a component.
+  const wiring = useMemo(
+    () => wiringFlags(layout.wires, layout.components),
+    [layout.wires, layout.components])
+
   const context = () => ({
     device_id: device?.id ?? CTX_DEVICE_ID,
-    components: layout.components.map(c => ({ type: c.type, label: c.type })),
+    components: layout.components.map(c => ({ type: c.type, label: componentDef(c.type)?.label ?? c.type })),
     readings: live,
-    anomalies: flags,
+    anomalies: sensorFlags,
+    wiring,
   })
 
   const connect = async () => {
@@ -69,7 +77,7 @@ export default function App() {
           if (activeAdapter.isReading(obj)) {
             const clean = activeAdapter.toReading(obj)
             setLive(clean)
-            setFlags(anomalyFlags(clean))
+            setSensorFlags(anomalyFlags(clean))
           }
         },
         onError: (err) => { setStatus('error'); setTutor(t => ({ ...t, error: err.message })) },
@@ -188,7 +196,7 @@ export default function App() {
                   flash the node firmware and reconnect.
                 </p>
               )}
-              <TwinCanvas layout={layout} live={live} flags={flags}
+              <TwinCanvas layout={layout} live={live} sensorFlags={sensorFlags}
                 onMove={(id, x, y) => setLayout(l => moveComponent(l, id, x, y))}
                 onAdd={(type) => setLayout(l => addComponent(l, type))}
                 onWire={(fc, fp, tc, tp) => setLayout(l => addWire(l, fc, fp, tc, tp))}
