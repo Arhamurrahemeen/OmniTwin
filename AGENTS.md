@@ -185,10 +185,14 @@ Playwright MCP server is configured with `--browser msedge` and
   universal-detection/canvas work is
   `docs/superpowers/specs/2026-09-26-omnitwin-universal-detection-canvas-design.md`.
   Its successor — **proposed, not yet implemented** — is
-  `docs/superpowers/specs/2026-09-26-omnitwin-universal-discovery-and-measurement-design.md`,
-  which covers the channel-keyed stream, registry channel objects, and the
-  `PROBE <gpio> <protocol>` verb. Read its §0 and §9 before starting discovery
-  work: §9 lists open items that spec inherited and did not close.
+  `docs/superpowers/specs/2026-09-26-omnitwin-universal-discovery-and-measurement-design.md`.
+  **OmniTwin is a platform for debugging students' own semester projects, not a
+  sensor kit** — do not plan work from the parts list in `Cost-Structure.md`. That
+  spec makes OmniTwin a portable C library the student links into their own
+  program (they keep their firmware; ours cannot occupy the board too), targets
+  ESP32 + ATmega328P as two silicon ports behind one JSON dialect, and specifies a
+  channel-keyed stream as the core change. Read its §0, §2 and §10 before
+  starting discovery or firmware work.
   (`.superpowers/sdd/` is git-ignored scratch — `*` in its own `.gitignore` —
   and holds only per-plan SDD artifacts: `plan-path`, `progress.md`, task briefs,
   review diffs. Never put a spec there; it will not be committed.)
