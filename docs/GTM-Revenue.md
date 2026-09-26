@@ -7,11 +7,13 @@ tags:
   - type/gtm-revenue
   - status/active
 type: gtm-revenue
-updated: 2026-08-14
+updated: 2026-09-26
 ---
 # OmniTwin — GTM & Revenue
 
 **Split out from Overview.md on 2026-08-14** to keep Overview focused on product (problem, solution, tiers, competitive landscape, defensibility). This file holds customer/revenue, go-to-market, and commercial risk.
+
+**Team:** four members (see [Team.md](Team.md)) — Arham (Founder & Hardware Lead), Tasbiha (Co-founder & Lead), Asma (Co-founder & AI/Software Lead), Abdul Basit (Co-founder & Full-stack Developer). **No named GTM owner yet** — see Open Risks.
 
 ---
 
@@ -31,6 +33,7 @@ updated: 2026-08-14
 
 ## Open Risks (flag honestly, including in incubation interviews)
 
+- **No named GTM owner.** Four members, and every one of them is defined by a build role. The DUET pilot and university procurement are the entire revenue path, and nobody owns them. Name an owner before the pilot, not during it.
 - Sales cycle to universities is slower than SaaS-to-SME (procurement, budget cycles, department buy-in) — plan for this in runway assumptions.
 - Global incumbents could localize if they saw Pakistan as worth it — the moat is speed and relationship depth, not a patent or hard technical barrier.
 - Hardware supply chain (ESP32 + sensors) at scale needs a real logistics plan once beyond pilot-size kit shipments.
@@ -38,5 +41,6 @@ updated: 2026-08-14
 ---
 
 ## Related
-- [[OmniTwin/Overview]] — product, problem/solution, tiers, competitive landscape
-- [[OmniTwin/Cost-Structure]] — CAPEX/OPEX
+- [Overview.md](Overview.md) — product, problem/solution, tiers, competitive landscape, team
+- [Cost-Structure.md](Cost-Structure.md) — CAPEX/OPEX
+- [Team.md](Team.md) — roster and coverage

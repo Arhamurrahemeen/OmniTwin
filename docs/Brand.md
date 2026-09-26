@@ -7,11 +7,13 @@ tags:
   - type/brand
   - status/active
 type: brand
-updated: 2026-08-14
+updated: 2026-09-26
 ---
 # OmniTwin — Brand: Theme, Voice, Visual Identity, Logo
 
 **Status:** Early, in progress. Wordmark direction locked; icon/favicon and domain unresolved.
+
+**Decision owner:** Arham (Founder). Team of four — see [Team.md](Team.md).
 
 ---
 
@@ -53,8 +55,12 @@ No icon/symbol currently exists. A wordmark alone does not scale down to a 16–
 | Ink | `#04342C` | Text / dark UI |
 | Kit orange | `#D85A30` | Playful accent — **fenced to student-facing product only** (dashboard highlights, kit packaging, onboarding). Never in the wordmark or university-facing materials. |
 | Paper | `#F1EFE8` | Neutral background |
+| Power red | `#C62828` | Wire/pin **kind** label in the dashboard only (power rails). A teaching convention, not a measurement. |
+| Ground slate | `#37474F` | Wire/pin **kind** label in the dashboard only (ground rails). Same caveat. |
 
 **Note on green choice:** deliberately shifted away from Arduino's exact teal (`#00878F`-ish family) — close enough to signal "hardware/maker" by association, distinct enough to not read as an Arduino reskin. Confirmed: Arduino's own brand identity is built around a specific proprietary teal shade, so straight teal was avoided.
+
+**Note on the two wire-kind colours:** red and slate are functional signals in the canvas (power vs ground), not brand accents. They are deliberately outside the core palette so nobody mistakes a wire for a brand element, and they must never appear in the wordmark or university-facing material.
 
 ## 4. Typography
 
@@ -85,7 +91,7 @@ Same underlying fact, reworded per audience — not two different claims, two di
 - **Domain check status (incomplete — search-engine absence is not a registrar confirmation):**
   - `.ai` — taken (confirmed, live site)
   - `.com` — no indexed site found; **not confirmed available**, needs an actual Namecheap/GoDaddy check
-  - `.pk` — no indexed site found; **not confirmed available**, needs a PKNIC check specifically (matters given the localization/Pakistan-market positioning in Overview.md §6)
+  - `.pk` — no indexed site found; **not confirmed available**, needs a PKNIC check specifically (matters given the localization/Pakistan-market positioning in Overview.md §1 and §4)
   - `.eth` — registered as an ENS name, irrelevant to actual use
 - **Not yet checked:** Pakistan IPO trademark registry, social handles (Instagram/LinkedIn/X), `.com`/`.pk` via an actual registrar tool.
 
@@ -100,6 +106,6 @@ Same underlying fact, reworded per audience — not two different claims, two di
 ---
 
 ## Related
-- [[OmniTwin/Overview]] — product, market, pricing, competitive landscape
-- [[OmniTwin/Team]] — team roster
+- [Overview.md](Overview.md) — product, market, pricing, competitive landscape, team
+- [Team.md](Team.md) — team roster
 - [[Profile/Who is Arham]] §5a — identity-level OmniTwin summary

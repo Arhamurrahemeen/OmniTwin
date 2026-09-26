@@ -17,9 +17,11 @@ ESP32 rig ──USB cable──> browser (Web Serial) ──live twin canvas (fr
                                       └─FastAPI ──> MongoDB (devices, roster, tutor_sessions)
 ```
 
-- **Firmware** (`firmware/twinlab_node_v1`, ESP-IDF): line-delimited JSON protocol over UART0 (the board's USB console line) — `IDENT` / `SCAN` / `STREAM on|off` / `PING` / `DIAG`. `SCAN` sweeps the I2C bus (0x68/0x69 → MPU6050), probes the DHT22 on GPIO4, and reports unknown addresses as `null` for manual add. Device ID is MAC-derived (`TL-xxxxxx`). **No Wi-Fi, no MQTT, no credentials of any kind** — the board needs only its USB cable.
-- **Browser bridge** (`frontend/src/serial/`): thin Web Serial wrapper + a pure, node-tested model that reassembles raw UART bytes into JSON lines, maps scan results to components, and computes cheap local anomaly flags (NaN / out-of-range / no-data) at zero LLM cost.
-- **Dashboard** (`frontend/`, Vite/React): Connect your ESP32 → pick the COM port → IDENT/SCAN place detected components on a draggable 2D twin canvas (ESP32, breadboard, MPU6050, DHT22 sprites) → streaming live values with anomaly rings → "Ask the Tutor" chat. A `?demo=1` query param swaps the board for an offline fake session. Works even with sensors unplugged: the board still answers IDENT/PING/SCAN and the stream degrades to DHT-only rows (`accel null`).
+- **Firmware** (`firmware/twinlab_node_v1`, ESP-IDF): line-delimited JSON protocol over UART0 (the board's USB console line) — `IDENT` / `SCAN` / `WHOAMI <addr> <reg>` / `STREAM on|off` / `PING` / `DIAG`. `SCAN` sweeps the I2C bus and reports **raw ACK'd addresses only**; part identity is the browser's job — it reads each address's WHOAMI register and resolves it through a data-driven component registry, so adding a sensor is a JSON edit rather than a firmware change. An address nothing claims resolves to no component at all (no phantom sprite) and is added by hand. Device ID is MAC-derived (`TL-xxxxxx`). **No Wi-Fi, no MQTT, no credentials of any kind** — the board needs only its USB cable.
+- **Board adapters** (`frontend/src/serial/adapters/`): each adapter owns one firmware dialect's commands and parsers. The dashboard holds no protocol knowledge of its own and probes adapters in turn, so supporting a second board is a new adapter file rather than a new `if` in the UI.
+- **Component registry** (`frontend/src/registry/components.json`): the single source of truth for part identity, sprite geometry, and pin kinds (power/ground/signal). It is what makes the kit extensible without touching firmware or JS.
+- **Browser bridge** (`frontend/src/serial/`): thin Web Serial wrapper + a pure, node-tested model that reassembles raw UART bytes into JSON lines, resolves scan results to components through the registry, and computes cheap local anomaly flags (NaN / out-of-range / no-data) at zero LLM cost.
+- **Dashboard** (`frontend/`, Vite/React): Connect your ESP32 → pick the COM port → IDENT/SCAN place detected components on a draggable 2D twin canvas (ESP32, breadboard, MPU6050, DHT22 sprites) → streaming live values with anomaly rings → "Ask the Tutor" chat. Students then **wire the rig by clicking pins**, and a wrong connection (a signal pin in a ground pin) is flagged by name at zero LLM cost. A `?demo=1` query param swaps the board for an offline fake session. Works even with sensors unplugged: the board still answers IDENT/PING/SCAN and the stream degrades to DHT-only rows (`accel null`).
 - **Backend** (`backend/`, FastAPI v0.3.0 + MongoDB db `twinlab`): `devices` CRUD, `roster` (CSV import + server-side project-count quota + `/demo-kit` rotation for the shared hardware kit), and `POST /tutor` — builds an OpenAI-shaped prompt from the live rig snapshot and calls Groq with the key server-side only (`GROQ_API_KEY` in `backend/.env`); transcripts persist to `tutor_sessions`. The MQTT broker, InfluxDB, WebSocket router, and simulator stack were **removed** — the data plane is USB-serial.
 
 Nothing runs autonomously: the LLM fires only when a student asks, anomaly flags are computed in the browser, and the backend stores registry/history, not a live stream.
@@ -57,5 +59,15 @@ The market is polarized between enterprise-grade industrial suites universities 
 
 **Positioning:** digital simulation-only tools (Wokwi, Tinkercad) sit at one pole; enterprise-grade suites at the other. OmniTwin sits at "any real hardware + AI diagnostics" — cheap, student-owned kits wired to any microcontroller, with an honest twin and AI coaching no vendor in this list ships.
 
+## 6. Team
 
+Four members. Full detail in [Team.md](Team.md).
 
+| Member | Role | Owns |
+|---|---|---|
+| Muhammad Arham Rajput | Founder & Hardware Lead | ESP32, sensor integration, firmware, the physical kit |
+| Tasbiha Naz | Co-founder & Lead | Overall coordination; backend, LLM applications, RAG, automation |
+| Asma Aslam | Co-founder & AI/Software Lead | AI features, AI-assisted fault detection, tutor behaviour |
+| Abdul Basit | Co-founder & Full-stack Developer | Dashboard frontend and backend application work |
+
+Hardware remains a single point of failure — Arham is the only member with embedded ownership, which is a risk to watch past pilot. GTM and university relationships have no named owner yet.
