@@ -1,0 +1,33 @@
+# Tooling config for the OmniTwin Python backend.
+# Deliberately contains NO [project] table so pip/pytest rootdir behaviour is unchanged.
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+
+# backend/ is the import root: the app uses flat imports (`from config import
+# settings`, `from db.mongo import get_db`) because uvicorn runs with backend/
+# as the working directory. Without this, isort misclassifies them as third-party.
+src = ["backend"]
+
+extend-exclude = [
+    ".venv",
+    "firmware",     # ESP-IDF C project, not Python
+    "node_modules",
+]
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # bugbear
+    "SIM",  # simplify
+]
+
+[tool.ruff.lint.per-file-ignores]
+# conftest.py exists purely to put backend/ on sys.path; its imports are the point.
+"conftest.py" = ["E402"]
+# Tests import the app as `backend.llm` (repo root on sys.path) while the app
+# itself uses flat imports. Both are intentional.
+"tests/*" = ["E402"]
