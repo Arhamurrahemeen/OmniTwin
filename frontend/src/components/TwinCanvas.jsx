@@ -20,6 +20,12 @@ export default function TwinCanvas({ layout, live = {}, sensorFlags = [], onMove
   // a one-file JSON edit.
   const readsFor = (type) => componentDef(type)?.reads ?? []
 
+  // The firmware streams accel as %.3f, so 1 dp threw away two decimals: a
+  // resting MPU reads ±0.03 g and rendered as a permanent "ax: 0.0", which
+  // looked exactly like a frozen stream. Temperature is the only reading coarse
+  // enough for 1 dp.
+  const DECIMALS = { temp: 1, hum: 1 }
+
   const onPointerDown = (c) => (e) => {
     e.stopPropagation()
     setDragging({ id: c.id, dx: e.clientX - c.x, dy: e.clientY - c.y })
@@ -86,7 +92,7 @@ export default function TwinCanvas({ layout, live = {}, sensorFlags = [], onMove
           </div>
           {readsFor(c.type).map(k => live[k] != null && (
               <div key={k} style={{ fontSize: 9, color: 'var(--ot-green)' }}>
-                {k}: {typeof live[k] === 'number' ? live[k].toFixed(1) : '--'}
+                {k}: {typeof live[k] === 'number' ? live[k].toFixed(DECIMALS[k] ?? 3) : '--'}
               </div>
             ))}
           {badgeFor(c.id) && (

@@ -3,7 +3,7 @@
  * Line-driven JSON protocol over UART0 (the USB bridge's console line), so a
  * browser using the Web Serial API opens the same COM port the flasher uses.
  *
- *   IDENT      -> {"device":"ESP32","fw":"1.1","board":"twinlab-node","id":"TL-XXXXXX"}
+ *   IDENT      -> {"device":"ESP32","fw":"1.2","board":"twinlab-node","id":"TL-XXXXXX"}
  *   SCAN       -> {"i2c":[{"addr":104}],"dht22":{"gpio":4,"ok":true}}   (raw addrs; the
  *                  browser resolves part identity via WHOAMI + its registry)
  *   WHOAMI a r -> {"whoami":<int>} or -1. The browser supplies the register, so
@@ -46,6 +46,18 @@
 
 #define SAMPLE_HZ 100
 #define ACC_LSB   4096.0f   /* +-8 g */
+
+/* PWR_MGMT_1 (0x6B) for a live sensor on an MPU-6050 (WHO_AM_I 0x68).
+   That register is D7=SLEEP + D2:D0=CLKSEL — it has NO ACCEL_XEN bits; those
+   exist only on the MPU-6500/9250. So the accelerometer is always enabled and
+   the one thing that must be right is the clock source: CLKSEL 001/010/011
+   reference the X/Y/Z gyro, and with no gyro running the PLL never locks and
+   every ACCEL_XOUT register reads 0x0000 forever — a stream that looks live on
+   the bus but carries no data. CLKSEL=000 (internal 8MHz oscillator) is the
+   choice that cannot depend on a gyro that is not running. */
+#define MPU_PWR_MGMT1 0x00
+/* Bit 7 of 0x6B: set means asleep. Anything else means the chip took the wake. */
+#define MPU_SLEEP_BIT 0x80
 #define STREAM_HZ 10
 
 #define UART_BUF 256
@@ -60,7 +72,8 @@ static char g_device_id[DEVICE_ID_MAXLEN + 1];
 
 static float g_temp = NAN, g_hum = NAN;  /* last good DHT reading; NAN until first */
 static volatile bool g_stream_on = false;
-static volatile bool g_mpu_ready = false;   /* set once MPU found+configured */
+static volatile bool g_mpu_ready = false;
+static volatile bool g_mpu_dev_added = false;   /* set once MPU found+configured */
 static volatile bool g_mpu_r_ok = false;    /* last stream read result (DIAG visibility) */
 static uint8_t g_mpu_addr = 0;              /* 0x68 or 0x69 once found */
 static bool g_sda_up = false, g_scl_up = false;  /* pull-up snapshot at boot */
@@ -150,11 +163,12 @@ static esp_err_t mpu_r(uint8_t reg, uint8_t *buf, size_t n)
    A readback gate (not just ACK) is what makes "configured" honest. */
 static void mpu_init_regs(void)
 {
-    mpu_w(0x6B, 0x01);   /* wake, PLL with X gyro reference */
+    mpu_w(0x6B, MPU_PWR_MGMT1);   /* wake, internal oscillator (see MPU_PWR_MGMT1) */
     mpu_w(0x1A, 0x03);   /* CONFIG: DLPF 44Hz */
     mpu_w(0x19, 0x00);   /* SMPLRT_DIV: 1kHz */
     mpu_w(0x1B, 0x08);   /* GYRO_CONFIG: +-500 dps */
-    mpu_w(0x1C, 0x10);   /* ACCEL_CONFIG: +-8g  (ACC_LSB=4096 assumes this) */
+    mpu_w(0x1C, 0x20);   /* ACCEL_CONFIG: AFS_SEL=2 = +-8g. 0x10 is +-4g, which
+                            contradicted ACC_LSB=4096 and halved every reading. */
 }
 
 static bool mpu_try_init(void)
@@ -172,12 +186,25 @@ static bool mpu_try_init(void)
         .scl_speed_hz    = 100000,   /* 100kHz tolerates marginal breadboard wiring far better than 400kHz */
     };
     if (i2c_master_bus_add_device(bus, &dev_cfg, &mpu) != ESP_OK) return false;
+    g_mpu_dev_added = true;   /* so DIAG can read registers even if the gate below fails */
 
     for (int i = 0; i < 10; i++) {
         mpu_init_regs();
         uint8_t pwr = 0, acc = 0;
-        if (mpu_r(0x6B, &pwr, 1) == ESP_OK && pwr == 0x01 &&
-            mpu_r(0x1C, &acc, 1) == ESP_OK && acc == 0x10) {
+        /* Gate on the two things this part can actually be trusted to honour:
+           it is no longer asleep, and the range register took. Do NOT gate on
+           ACCEL_XEN-style bits — those are MPU-6500/9250 and reading them on an
+           MPU-6050 tests reserved bits, which can never pass, and the sensor
+           then stays permanently unready.
+
+           A sensor whose configuration did not take is deliberately left NOT
+           ready. The alternative is worse: a chip that ACKs the bus and answers
+           WHO_AM_I but ignores register writes then streams a confident
+           0.000 g forever, which the dashboard cannot tell from a real reading
+           at rest. Unready means the board streams nulls instead, the canvas
+           badges the part "not reporting", and the fault is visible. */
+        if (mpu_r(0x6B, &pwr, 1) == ESP_OK && (pwr & MPU_SLEEP_BIT) == 0 &&
+            mpu_r(0x1C, &acc, 1) == ESP_OK && (acc & 0x18) == 0x18) {   /* AFS_SEL = +-8g */
             g_mpu_addr = addr;
             g_mpu_ready = true;
             ESP_LOGI(TAG, "MPU6050 found + configured at 0x%02X", addr);
@@ -289,7 +316,7 @@ static void dht_task(void *arg)
 
 static void reply_ident(void)
 {
-    printf("{\"device\":\"ESP32\",\"fw\":\"1.1\",\"board\":\"twinlab-node\",\"id\":\"%s\"}\n", g_device_id);
+    printf("{\"device\":\"ESP32\",\"fw\":\"1.2\",\"board\":\"twinlab-node\",\"id\":\"%s\"}\n", g_device_id);
 }
 
 /* Read one WHOAMI register from an arbitrary address. The browser supplies the
@@ -350,24 +377,36 @@ static void reply_diag(void)
 {
     bool p68 = i2c_master_probe(bus, MPU_ADDR, 100) == ESP_OK;
     bool p69 = i2c_master_probe(bus, MPU_ADDR_ALT, 100) == ESP_OK;
-    int whoami = -1, pwr = -1, pwr_after = -1, cfg = -1, accel_cfg = -1, ax_raw = 0;
-    if (g_mpu_ready) {
+    int whoami = -1, pwr = -1, pwr_after = -1, cfg = -1, accel_cfg = -1;
+    int ax_raw = 0, ay_raw = 0, az_raw = 0;
+    if (g_mpu_dev_added) {
         uint8_t v;
         if (mpu_r(0x75, &v, 1) == ESP_OK) whoami = v;
         if (mpu_r(0x6B, &v, 1) == ESP_OK) pwr = v;
-        mpu_w(0x6B, 0x01);                       /* force fresh wake write */
+        /* Re-apply the SAME value init uses. DIAG used to write its own literal
+           here, so merely running DIAG changed the sensor's power state. */
+        mpu_w(0x6B, MPU_PWR_MGMT1);
         if (mpu_r(0x6B, &v, 1) == ESP_OK) pwr_after = v;
         if (mpu_r(0x1A, &v, 1) == ESP_OK) cfg = v;
         if (mpu_r(0x1C, &v, 1) == ESP_OK) accel_cfg = v;
-        uint8_t d[2];
-        if (mpu_r(0x3B, d, 2) == ESP_OK) ax_raw = (int16_t)((d[0] << 8) | d[1]);
+        /* All three axes, not just X: at rest X is ~0 whether or not the sensor
+           is working, so ax_raw alone cannot tell a live sensor from a dead
+           one. Z carries gravity (~4096 at +-8g) and is the decisive reading. */
+        uint8_t d[6];
+        if (mpu_r(0x3B, d, 6) == ESP_OK) {
+            ax_raw = (int16_t)((d[0] << 8) | d[1]);
+            ay_raw = (int16_t)((d[2] << 8) | d[3]);
+            az_raw = (int16_t)((d[4] << 8) | d[5]);
+        }
     }
-    printf("{\"bus\":{\"sda_up\":%s,\"scl_up\":%s},\"probe\":{\"0x68\":%s,\"0x69\":%s},\"mpu\":{\"ready\":%s,\"addr\":%d,\"read_ok\":%s,\"whoami\":%d,\"pwr_mgmt1\":%d,\"pwr_after_wake\":%d,\"cfg\":%d,\"accel_cfg\":%d,\"ax_raw\":%d}}\n",
+    printf("{\"bus\":{\"sda_up\":%s,\"scl_up\":%s},\"probe\":{\"0x68\":%s,\"0x69\":%s},\"mpu\":{\"ready\":%s,\"addr\":%d,\"read_ok\":%s,\"whoami\":%d,\"pwr_mgmt1\":%d,\"pwr_after_wake\":%d,\"awake\":%s,\"cfg\":%d,\"accel_cfg\":%d,\"raw\":{\"ax\":%d,\"ay\":%d,\"az\":%d}}}\n",
            g_sda_up ? "true" : "false", g_scl_up ? "true" : "false",
            p68 ? "true" : "false", p69 ? "true" : "false",
            g_mpu_ready ? "true" : "false", g_mpu_addr,
            g_mpu_r_ok ? "true" : "false",
-           whoami, pwr, pwr_after, cfg, accel_cfg, ax_raw);
+           whoami, pwr, pwr_after,
+           (pwr_after >= 0 && (pwr_after & MPU_SLEEP_BIT) == 0) ? "true" : "false",
+           cfg, accel_cfg, ax_raw, ay_raw, az_raw);
 }
 
 static void handle_cmd(cmd_t cmd, const char *line)
@@ -434,20 +473,34 @@ static void stream_task(void *arg)
             mpu_try_init();   /* boot retry AND self-heal on flaky-wire drops */
         }
         if (g_stream_on) {
+            /* ALWAYS emit a frame, even with nothing attached. A silent board
+               is indistinguishable from a frozen one in the browser: `live`
+               stops updating, so no part can ever be reported as gone and a
+               disconnect is invisible until the student re-runs SCAN. The
+               nulls ARE the signal — they are how the dashboard learns that a
+               part stopped reporting. This is also what proves a bare node is
+               alive. */
+            const bool dht_ok = !isnan(g_temp);
             if (mpu_ok) {
                 float ax = (int16_t)((d[0] << 8) | d[1]) / ACC_LSB;
                 float ay = (int16_t)((d[2] << 8) | d[3]) / ACC_LSB;
                 float az = (int16_t)((d[4] << 8) | d[5]) / ACC_LSB;
-                if (isnan(g_temp)) /* temp==0 placeholder means DHT not sampled yet */
-                    printf("{\"ts\":%lld,\"temp\":null,\"hum\":null,\"ax\":%.3f,\"ay\":%.3f,\"az\":%.3f}\n",
-                           epoch_ms(), ax, ay, az);
-                else
+                if (dht_ok)
                     printf("{\"ts\":%lld,\"temp\":%.1f,\"hum\":%.1f,\"ax\":%.3f,\"ay\":%.3f,\"az\":%.3f}\n",
                            epoch_ms(), g_temp, g_hum, ax, ay, az);
-            } else if (!isnan(g_temp)) {
+                else
+                    printf("{\"ts\":%lld,\"temp\":null,\"hum\":null,\"ax\":%.3f,\"ay\":%.3f,\"az\":%.3f}\n",
+                           epoch_ms(), ax, ay, az);
+            } else if (dht_ok) {
                 /* MPU absent/unresponsive: still stream DHT readings. */
                 printf("{\"ts\":%lld,\"temp\":%.1f,\"hum\":%.1f,\"ax\":null,\"ay\":null,\"az\":null}\n",
                        epoch_ms(), g_temp, g_hum);
+            } else {
+                /* Neither sensor answers — a bare node. Stream the all-null
+                   row anyway: silence here is what made a disconnect
+                   undetectable. */
+                printf("{\"ts\":%lld,\"temp\":null,\"hum\":null,\"ax\":null,\"ay\":null,\"az\":null}\n",
+                       epoch_ms());
             }
         }
         vTaskDelay(pdMS_TO_TICKS(1000 / STREAM_HZ));
@@ -458,6 +511,15 @@ static void stream_task(void *arg)
 
 void app_main(void)
 {
+    /* This UART0 is the Web Serial protocol channel — it must carry only JSON.
+       Any ESP log (DHT failures, I2C timeouts, MPU retries) can interleave
+       mid-printf and corrupt the line the browser parses. Silence everything
+       FIRST, before proto_selftest or the bus check below can log anything:
+       this used to sit after those calls, so the boot banner and two INFO
+       lines reached the browser on every cold start. State is conveyed via the
+       JSON itself (temp:null, ok:false, ax:null). */
+    esp_log_level_set("*", ESP_LOG_NONE);
+
     proto_selftest();
     dht_selftest();
 
@@ -505,12 +567,6 @@ void app_main(void)
         .flags.enable_internal_pullup = true,
     };
     ESP_ERROR_CHECK(i2c_new_master_bus(&bus_cfg, &bus));
-
-    /* This UART0 is the Web Serial protocol channel — it must carry only JSON.
-       Any ESP log (DHT failures, I2C timeouts, MPU retries) can interleave
-       mid-printf and corrupt the line the browser parses. Silence everything;
-       state is conveyed via the JSON itself (temp:null, ok:false, ax:null). */
-    esp_log_level_set("*", ESP_LOG_NONE);
 
     xTaskCreatePinnedToCore(uart_task,   "uart"  , 4096, NULL, 8, NULL, 0);
     xTaskCreatePinnedToCore(dht_task,    "dht"   , 3072, NULL, 5, NULL, 1);

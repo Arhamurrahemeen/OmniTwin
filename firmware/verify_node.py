@@ -50,7 +50,12 @@ def main(port):
             if not chunk:
                 continue
             buf += chunk
-        lines, buf = buf.split("\n"), ""
+        lines = buf.split("\n")
+        # Keep the trailing partial line for the next drain. This used to assign
+        # the tail to `buf` and then immediately overwrite `buf` with "", so any
+        # line split across two reads was silently discarded — which desynced
+        # every command after it and showed up as a bogus "no reply".
+        buf = lines.pop()
         out = []
         for ln in lines:
             ln = ln.strip()
@@ -88,7 +93,7 @@ def main(port):
     if ident is None:
         print("\nBoard did not answer. Check the cable and that firmware is flashed.")
         return 1
-    check("fw is 1.1", ident.get("fw") == "1.1", f"got {ident.get('fw')!r}")
+    check("fw is 1.2", ident.get("fw") == "1.2", f"got {ident.get('fw')!r}")
     check("device id looks like TL-XXXXXX", str(ident.get("id", "")).startswith("TL-"),
           repr(ident.get("id")))
 
@@ -98,7 +103,7 @@ def main(port):
     check("DIAG still answers", isinstance(diag, dict) and "mpu" in diag,
           f"mpu.ready={diag.get('mpu', {}).get('ready') if diag else None}")
 
-    print("\n-- SCAN: raw addresses, no part name (fw 1.1 contract) --")
+    print("\n-- SCAN: raw addresses, no part name (fw 1.1+ contract) --")
     scan = send("SCAN", 20.0)   # 117-address sweep: ~12s on an empty bus
     if scan is None:
         check("SCAN answers", False, "no reply within 20s")

@@ -7,7 +7,7 @@ import { DemoSession } from './serial/demoSession.mjs'
 import ADAPTER from './serial/adapters/twinlab_esp32_v1'
 import {
   defaultLayout, parseScan, detectAdapter, detectComponents, scanNotice,
-  addComponent, moveComponent, addWire, removeWire, anomalyFlags, wiringFlags, componentDef, notReporting,
+  addComponent, moveComponent, addWire, removeWire, anomalyFlags, partFaults, wiringFlags, componentDef, notReporting,
 } from './serial/serialModel.mjs'
 import { askTutor } from './api'
 import wordmark from './assets/wordmark.png'
@@ -244,7 +244,7 @@ export default function App() {
                   </button>
                 </p>
               )}
-              <TwinCanvas layout={layout} live={live} sensorFlags={sensorFlags}
+              <TwinCanvas layout={layout} live={live} sensorFlags={partFaults(sensorFlags)}
                 onMove={(id, x, y) => setLayout(l => moveComponent(l, id, x, y))}
                 onAdd={(type) => setLayout(l => addComponent(l, type))}
                 onWire={(fc, fp, tc, tp) => setLayout(l => addWire(l, fc, fp, tc, tp))}

@@ -219,8 +219,9 @@ export async function detectComponents(scan, askWhoami) {
 }
 
 // Cheap local anomaly flags — zero LLM cost. Returns array of short strings.
+const NO_DATA = 'no data yet'
 export function anomalyFlags(readings) {
-  if (!readings || Object.keys(readings).length === 0) return ['no data yet']
+  if (!readings || Object.keys(readings).length === 0) return [NO_DATA]
   const flags = []
   for (const [sensor, value] of Object.entries(readings)) {
     const name = LABELS[sensor] ?? sensor
@@ -234,6 +235,15 @@ export function anomalyFlags(readings) {
     if (range && range.min != null && value < range.min) flags.push(`${name} below ${range.min}`)
   }
   return flags
+}
+
+// Strip the connection-level flag so the canvas can badge parts only.
+// 'no data yet' means the BOARD is silent, not that a part misbehaves — badging
+// it onto every sprite turned one connection fault into N phantom part faults.
+// The tutor still receives the full list, where "I cannot see your board" is
+// useful information.
+export function partFaults(flags) {
+  return flags.filter((f) => f !== NO_DATA)
 }
 
 // Which components have gone quiet. A part is "not reporting" when the registry

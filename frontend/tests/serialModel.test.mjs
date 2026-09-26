@@ -4,7 +4,7 @@ import {
   readLine, parseScan, scanToComponents, defaultLayout,
   addComponent, moveComponent, addWire, removeWire, pinPos, wiresFor,
   wiringFlags, wiringFaults, wireStroke, referenceGhosts,
-  anomalyFlags, notReporting, withTimeout, scanNotice,
+  anomalyFlags, notReporting, partFaults, withTimeout, scanNotice,
 } from '../src/serial/serialModel.mjs'
 
 test('readLine reassembles a line split across chunks', () => {
@@ -303,6 +303,15 @@ test('notReporting is empty once a sensor reports again (self-heals on re-plug)'
   const [mpu] = l.components
   assert.deepEqual(notReporting(l.components, { ax: null, ay: null, az: null }), [mpu.id])
   assert.deepEqual(notReporting(l.components, { ax: 0.01, ay: 0.02, az: 0.99 }), [])
+})
+
+test('partFaults drops the connection-level flag so it cannot badge every part', () => {
+  // A silent board is ONE connection fault. Badging it onto all four sprites
+  // made a dead link look like four broken sensors.
+  assert.deepEqual(partFaults(anomalyFlags({})), [])
+  assert.deepEqual(partFaults(['no data yet']), [])
+  assert.deepEqual(partFaults(['temperature above 40']), ['temperature above 40'])
+  assert.deepEqual(partFaults(['no data yet', 'vib above 0.2']), ['vib above 0.2'])
 })
 
 test('withTimeout rejects when the promise never settles', async () => {
