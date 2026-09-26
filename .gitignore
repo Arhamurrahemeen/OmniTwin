@@ -31,3 +31,8 @@ dist/
 
 # Runtime logs
 *.log
+# Playwright MCP run output - regenerable, not source. The three deck stills
+# (A_connect / B_twin / C_tutor) are real assets and stay tracked.
+docs/PPTx/screenshots/page-*.yml
+docs/PPTx/screenshots/console-*.log
+docs/PPTx/screenshots/mcp-verify-*.png

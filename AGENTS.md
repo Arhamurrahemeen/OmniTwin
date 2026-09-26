@@ -184,6 +184,11 @@ Playwright MCP server is configured with `--browser msedge` and
   Check them before re-litigating a past decision. The current spec for the
   universal-detection/canvas work is
   `docs/superpowers/specs/2026-09-26-omnitwin-universal-detection-canvas-design.md`.
+  Its successor — **proposed, not yet implemented** — is
+  `docs/superpowers/specs/2026-09-26-omnitwin-universal-discovery-and-measurement-design.md`,
+  which covers the channel-keyed stream, registry channel objects, and the
+  `PROBE <gpio> <protocol>` verb. Read its §0 and §9 before starting discovery
+  work: §9 lists open items that spec inherited and did not close.
   (`.superpowers/sdd/` is git-ignored scratch — `*` in its own `.gitignore` —
   and holds only per-plan SDD artifacts: `plan-path`, `progress.md`, task briefs,
   review diffs. Never put a spec there; it will not be committed.)
