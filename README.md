@@ -45,7 +45,7 @@ The board works even with sensors unplugged: IDENT/PING/SCAN answer and the stre
 
 ```powershell
 .\.venv\Scripts\python -m pytest tests\test_roster.py tests\test_llm.py -q
-node --test frontend\tests
+node --test "frontend/tests/*.test.mjs"
 ```
 
 ## Layout
