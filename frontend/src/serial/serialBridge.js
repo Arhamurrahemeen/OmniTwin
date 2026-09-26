@@ -10,13 +10,18 @@ export async function requestPort() {
 }
 
 export class SerialSession {
-  constructor({ port, baudRate = 115200, onData = () => {}, onError = () => {} }) {
+  // `isData` tells a reading apart from a command reply. The bridge stays
+  // protocol-agnostic: the caller passes the active adapter's own predicate
+  // (adapter.isReading), so no dialect knowledge leaks in here. Defaults to
+  // "nothing is a reading", which is the pre-streaming behaviour.
+  constructor({ port, baudRate = 115200, onData = () => {}, onError = () => {}, isData = () => false }) {
     this.port = port
     this.baudRate = baudRate
     this.reader = null
     this.writer = null
     this.onData = onData
     this.onError = onError
+    this.isData = isData
     this._state = { rest: '' }
     this._resolver = null // single outstanding command awaiting its reply
   }
@@ -46,6 +51,12 @@ export class SerialSession {
   _dispatch(line) {
     let obj
     try { obj = JSON.parse(line) } catch { return }   // ignore noise
+    // A reading is data, never a command reply. With STREAM on the board pushes
+    // ~10 Hz, so without this a SCAN resolves with a stream frame: parseScan
+    // finds no i2c/dht22 and the UI reports "no sensors found", overwriting a
+    // correct status line with a confident lie. Checked BEFORE the stale-reply
+    // drop, so a command that timed out mid-stream cannot eat a live reading.
+    if (this.isData(obj)) { this.onData(obj); return }
     // A reply to a command that already timed out is stale. Drop exactly one
     // such line, otherwise a slow board's late IDENT would be handed to the
     // NEXT command as its result (identifying it as the wrong dialect, or

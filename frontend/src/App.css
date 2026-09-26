@@ -777,10 +777,14 @@
 
 .tutor-user {
   color: var(--ot-ink);
+  /* The reply is plain text, so preserve the model's line breaks instead of
+     collapsing them into one run-on paragraph. */
+  white-space: pre-wrap;
 }
 
 .tutor-ai {
   color: var(--ot-green);
+  white-space: pre-wrap;
 }
 
 .tutor-error {

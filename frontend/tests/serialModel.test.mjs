@@ -4,7 +4,7 @@ import {
   readLine, parseScan, scanToComponents, defaultLayout,
   addComponent, moveComponent, addWire, removeWire, pinPos, wiresFor,
   wiringFlags, wiringFaults, wireStroke, referenceGhosts,
-  anomalyFlags, withTimeout, scanNotice,
+  anomalyFlags, notReporting, withTimeout, scanNotice,
 } from '../src/serial/serialModel.mjs'
 
 test('readLine reassembles a line split across chunks', () => {
@@ -262,6 +262,47 @@ test('anomalyFlags flags NaN, out-of-range, frozen stream', () => {
   assert.deepEqual(anomalyFlags({ temp: NaN }), ['temperature reading is NaN'])
   assert.deepEqual(anomalyFlags({ temp: 41.2, vib: 0.3 }), ['temperature above 40', 'vib above 0.2'])
   assert.deepEqual(anomalyFlags({}), ['no data yet'])
+})
+
+test('anomalyFlags treats null as absent, not as a NaN reading', () => {
+  // A bare board streams null for every sensor. That is absence — reported
+  // per-sprite by notReporting() — not a NaN fault, and not a whole-board one.
+  assert.deepEqual(anomalyFlags({ temp: null, hum: null, ax: null, ay: null, az: null, vib: null }), [])
+  assert.deepEqual(anomalyFlags({ temp: NaN }), ['temperature reading is NaN'])  // a real NaN still faults
+})
+
+test('notReporting flags only the sensor whose reads have all gone null', () => {
+  const l = defaultLayout([{ type: 'esp32' }, { type: 'mpu6050' }, { type: 'dht22' }])
+  const [, mpu, dht] = l.components
+  // MPU unplugged (the board streams null accel); DHT22 still reporting.
+  const silent = notReporting(l.components, { temp: 25, hum: 55, ax: null, ay: null, az: null, vib: null })
+  assert.deepEqual(silent, [mpu.id])
+  assert.ok(!silent.includes(dht.id), 'a reporting sensor must not be flagged')
+})
+
+test('notReporting never flags a part the registry gives no reads', () => {
+  // The esp32 and breadboard declare no readings, so "all reads null" would be
+  // vacuously true for them — they are the board, not a missing sensor.
+  const l = defaultLayout([{ type: 'esp32' }, { type: 'breadboard' }, { type: 'mpu6050' }])
+  const [esp, bb, mpu] = l.components
+  const silent = notReporting(l.components, { temp: null, hum: null, ax: null, ay: null, az: null })
+  assert.deepEqual(silent, [mpu.id])
+  assert.ok(!silent.includes(esp.id) && !silent.includes(bb.id), 'the board and breadboard must never be flagged')
+})
+
+test('notReporting is empty before the first stream frame arrives', () => {
+  // Just after connect, `live` is {} — nothing has been measured yet, so a
+  // sensor is unknown, not absent.
+  const l = defaultLayout([{ type: 'esp32' }, { type: 'mpu6050' }])
+  assert.deepEqual(notReporting(l.components, {}), [])
+  assert.deepEqual(notReporting(l.components, null), [])
+})
+
+test('notReporting is empty once a sensor reports again (self-heals on re-plug)', () => {
+  const l = defaultLayout([{ type: 'mpu6050' }])
+  const [mpu] = l.components
+  assert.deepEqual(notReporting(l.components, { ax: null, ay: null, az: null }), [mpu.id])
+  assert.deepEqual(notReporting(l.components, { ax: 0.01, ay: 0.02, az: 0.99 }), [])
 })
 
 test('withTimeout rejects when the promise never settles', async () => {

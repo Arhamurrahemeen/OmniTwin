@@ -224,10 +224,37 @@ export function anomalyFlags(readings) {
   const flags = []
   for (const [sensor, value] of Object.entries(readings)) {
     const name = LABELS[sensor] ?? sensor
-    if (value === null || Number.isNaN(value)) { flags.push(`${name} reading is NaN`); continue }
+    // null means the sensor is not reporting, not that it returned a bad
+    // number. Absence is notReporting()'s job and it is per-sprite; calling it
+    // an anomaly here badged every part on the board with a false '⚠ anomaly'.
+    if (value === null) continue
+    if (Number.isNaN(value)) { flags.push(`${name} reading is NaN`); continue }
     const range = SENSOR_RANGES[sensor]
     if (range && value > range.max) flags.push(`${name} above ${range.max}`)
     if (range && range.min != null && value < range.min) flags.push(`${name} below ${range.min}`)
   }
   return flags
+}
+
+// Which components have gone quiet. A part is "not reporting" when the registry
+// gives it reads and every one of them is null. The sprite is KEPT, not removed:
+// a glitchy bus or a scan that timed out mid-sweep must not delete a rig the
+// student built by hand.
+//
+// Deliberately not called "disconnected" — the board streams identical nulls
+// for an unplugged sensor and for an I2C error, so it cannot tell them apart
+// and neither can we. Parts with no registered reads (the esp32, the
+// breadboard) are never flagged: "all reads null" is vacuously true for them.
+//
+// ponytail: no debounce across frames. The firmware's null is stable rather than
+// flickery and the MPU probe retries at ~1 Hz, so a re-plug self-heals in about
+// a second. Add a consecutive-frame counter if a dropped frame ever flashes it.
+export function notReporting(components, live) {
+  if (!live || Object.keys(live).length === 0) return []   // nothing measured yet: unknown, not absent
+  return components
+    .filter((c) => {
+      const reads = componentDef(c.type)?.reads
+      return reads?.length > 0 && reads.every((k) => live[k] == null)
+    })
+    .map((c) => c.id)
 }

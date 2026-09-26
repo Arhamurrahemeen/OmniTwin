@@ -52,6 +52,35 @@ def test_system_prompt_tells_tutor_to_lead_with_wiring_faults():
     assert "lead" in system.lower() or "first" in system.lower() or "start" in system.lower()
 
 
+def test_system_prompt_forbids_markdown():
+    # TutorPanel renders the reply as literal text in a <p> — there is no
+    # markdown renderer — so **, ## and "- " reach the student verbatim.
+    # "Answer in plain language" did not stop it: the model read that as plain
+    # *English* and formatted anyway, so the ban must be explicit.
+    system = llm.build_prompt(_ctx(), [{"role": "user", "content": "hi"}])[0]["content"].lower()
+    assert "markdown" in system
+    assert "no bold" in system or "no markdown" in system
+    assert "bullet" in system
+
+
+def test_build_prompt_reports_components_that_went_quiet():
+    # Fixing the false "reading is NaN" flags would otherwise leave the tutor
+    # silent about a sensor the student just unplugged, so absence has to reach
+    # the prompt as its own labelled line — distinct from a threshold anomaly.
+    ctx = dict(_ctx())
+    ctx["disconnected"] = ["MPU6050"]
+    ctx["anomalies"] = []
+    block = llm.build_prompt(ctx, [{"role": "user", "content": "is my mpu ok?"}])[1]["content"]
+    assert "MPU6050" in block
+    assert "not reporting" in block.lower()
+
+
+def test_build_prompt_handles_absent_disconnected_key():
+    # Older browser builds send no disconnected key at all — must not raise.
+    block = llm.build_prompt(_ctx(), [{"role": "user", "content": "hi"}])[1]["content"]
+    assert "none" in block.lower()
+
+
 def test_groq_chat_raises_on_missing_key(monkeypatch):
     monkeypatch.setattr(llm.settings, "groq_api_key", None)
     with pytest.raises(llm.LLMError):

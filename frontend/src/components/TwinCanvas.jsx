@@ -3,7 +3,7 @@
    Pure presentational: layout is owned by App via serialModel. */
 import { useState } from 'react'
 import ComponentSprite from './ComponentSprite'
-import { allComponents, componentDef, pinDef, pinPos, wiresFor, wireStroke, referenceGhosts, wiringFaults } from '../serial/serialModel.mjs'
+import { allComponents, componentDef, pinDef, pinPos, wiresFor, wireStroke, referenceGhosts, wiringFaults, notReporting } from '../serial/serialModel.mjs'
 import ADAPTER from '../serial/adapters/twinlab_esp32_v1'
 
 // Pin dot colour by kind — the same convention the wire stroke uses.
@@ -49,10 +49,21 @@ export default function TwinCanvas({ layout, live = {}, sensorFlags = [], onMove
   const compById = (id) => layout.components.find(x => x.id === id)
 
   // A wiring fault belongs to the two parts it connects, so badge only those.
-  // Sensor anomalies stay global: a temperature reading is not attributable to
-  // one sprite from the flag string alone.
+  // A part that has gone quiet is attributable too — it is the part whose
+  // registered reads are all null — so that one is badged per sprite as well.
+  // Sensor anomalies stay global: a threshold excursion on "temp" is not
+  // attributable to one sprite from the flag string alone.
   const wiringBad = new Set(
     wiringFaults(layout.wires, layout.components).flatMap(f => f.componentIds))
+  const quiet = new Set(notReporting(layout.components, live))
+
+  // Most specific first: a wiring fault is a confirmed student error and the
+  // most actionable thing on the sprite; absence is a hardware fact; a
+  // threshold anomaly is often just downstream of one of the other two.
+  const badgeFor = (id) =>
+    wiringBad.has(id) ? '⚠ wiring'
+      : quiet.has(id) ? '⚠ not reporting'
+        : sensorFlags.length > 0 ? '⚠ anomaly' : null
 
   return (
     <div
@@ -78,9 +89,9 @@ export default function TwinCanvas({ layout, live = {}, sensorFlags = [], onMove
                 {k}: {typeof live[k] === 'number' ? live[k].toFixed(1) : '--'}
               </div>
             ))}
-          {(wiringBad.has(c.id) || sensorFlags.length > 0) && (
+          {badgeFor(c.id) && (
             <div style={{ color: 'var(--ot-orange)', fontSize: 9, maxWidth: 160 }}>
-              {wiringBad.has(c.id) ? '⚠ wiring' : '⚠ anomaly'}
+              {badgeFor(c.id)}
             </div>
           )}
         </div>

@@ -213,3 +213,35 @@ test('a reply arriving after its command timed out is discarded, not given to th
   assert.match(await next, /^rejected: /, 'the stale IDENT reply was delivered as the SCAN result')
   await s.close()
 })
+
+// With STREAM on the board pushes ~10 Hz of readings, and a command's resolver
+// used to take whatever JSON line arrived first. So a SCAN issued mid-stream
+// resolved with a READING: parseScan saw no i2c/dht22 and the UI reported
+// "no sensors found" while overwriting a correct status line with the lie.
+test('a stream frame never satisfies a waiting command, and still reaches onData', async () => {
+  const enc = new TextEncoder()
+  let pushLine = null
+  const streamingPort = {
+    open: async () => {},
+    close: async () => {},
+    readable: { getReader: () => ({ read: () => new Promise(r => { pushLine = (v) => r({ value: enc.encode(v), done: false }) }), cancel: async () => {} }) },
+    writable: { getWriter: () => ({ write: async () => {}, close: async () => {} }) },
+  }
+  const seen = []
+  const s = new SerialSession({
+    port: streamingPort,
+    isData: ADAPTER.isReading,
+    onData: (o) => seen.push(o),
+  })
+  await s.open()
+  const sc = s.command('SCAN', 300).then((r) => r, (e) => `rejected: ${e.message}`)
+  await new Promise(r => setTimeout(r, 10))
+  pushLine('{"ts":1,"temp":25.1,"hum":55.0,"ax":null,"ay":null,"az":null}\n')
+  await new Promise(r => setTimeout(r, 10))
+  pushLine('{"i2c":[{"addr":104}],"dht22":{"gpio":4,"ok":true}}\n')
+  const r = await sc
+  assert.ok(!String(r).startsWith('rejected'), `SCAN failed: ${r}`)
+  assert.ok(Array.isArray(r.i2c), 'SCAN resolved with a stream frame instead of the scan reply')
+  assert.ok(seen.some((o) => typeof o.ts === 'number'), 'the reading must still reach onData, not be swallowed')
+  await s.close()
+})

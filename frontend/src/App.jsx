@@ -7,7 +7,7 @@ import { DemoSession } from './serial/demoSession.mjs'
 import ADAPTER from './serial/adapters/twinlab_esp32_v1'
 import {
   defaultLayout, parseScan, detectAdapter, detectComponents, scanNotice,
-  addComponent, moveComponent, addWire, removeWire, anomalyFlags, wiringFlags, componentDef,
+  addComponent, moveComponent, addWire, removeWire, anomalyFlags, wiringFlags, componentDef, notReporting,
 } from './serial/serialModel.mjs'
 import { askTutor } from './api'
 import wordmark from './assets/wordmark.png'
@@ -56,7 +56,39 @@ export default function App() {
     readings: live,
     anomalies: sensorFlags,
     wiring,
+    // Labels, not layout ids — the model cannot resolve an id to a part.
+    disconnected: notReporting(layout.components, live)
+      .map((id) => componentDef(layout.components.find(c => c.id === id)?.type)?.label ?? 'unknown'),
   })
+
+  // SCAN, then read each identifiable address's WHOAMI register so identity
+  // comes off the chip rather than off the address. Shared by connect and
+  // Rescan. Add-only on purpose: a part that has gone quiet is badged on the
+  // canvas, never deleted, so a flaky bus cannot destroy a hand-built rig.
+  const runScan = async (session, adapter) => {
+    const scan = parseScan(await session.command(adapter.scanCommand, adapter.scanTimeoutMs))
+    const askWhoami = (addr, reg) =>
+      session.command(adapter.identityCommand(addr, reg), adapter.identityTimeoutMs)
+        .then(adapter.parseIdentity)
+    const detected = await detectComponents(scan, askWhoami)
+    setScanInfo(scanNotice(scan))
+    setLayout(prev => mergeLayout(prev, detected))
+  }
+
+  // ponytail: a failed rescan must not look like a dead session. STREAM is
+  // still on, so restore the status and surface the error instead.
+  const rescan = async () => {
+    const s = sessionRef.current
+    if (!s) return
+    setStatus('scanning')
+    try {
+      await runScan(s, activeAdapter)
+    } catch (err) {
+      setTutor(t => ({ ...t, error: `Rescan failed: ${err.message}` }))
+    } finally {
+      setStatus('streaming')
+    }
+  }
 
   const connect = async () => {
     if (!supportsSerial()) { setStatus('error'); return }
@@ -76,6 +108,11 @@ export default function App() {
       const session = new (isDemo() ? DemoSession : SerialSession)({
         port,
         baudRate: ADAPTER.baudRate,
+        // Keeps 10 Hz readings from being mistaken for a command reply, so a
+        // Rescan works while STREAM is on. ponytail: bound to the first
+        // adapter — rebind to `activeAdapter.isReading` at the point adapter
+        // #2 lands, when the dialect is known only after detection.
+        isData: ADAPTER.isReading,
         onData: (obj) => {
           if (activeAdapter.isReading(obj)) {
             const clean = activeAdapter.toReading(obj)
@@ -112,15 +149,7 @@ export default function App() {
       setDevice(found.info)
 
       setStatus('scanning')
-      const scan = parseScan(await session.command(adapter.scanCommand, adapter.scanTimeoutMs))
-      // Ask the board to read each identifiable address's WHOAMI register, so
-      // identity comes off the chip rather than off the address.
-      const askWhoami = (addr, reg) =>
-        session.command(adapter.identityCommand(addr, reg), adapter.identityTimeoutMs)
-          .then(adapter.parseIdentity)
-      const detected = await detectComponents(scan, askWhoami)
-      setScanInfo(scanNotice(scan))
-      setLayout(prev => mergeLayout(prev, detected))
+      await runScan(session, adapter)
 
       await session.command(adapter.streamOnCommand)
       setStatus('streaming')
@@ -195,6 +224,15 @@ export default function App() {
                 <div className="charts-header">
                   <span className="charts-device-name">{device.id}</span>
                   <span className="charts-device-location">{device.board} · fw {device.fw}</span>
+                  <button
+                    className="btn-secondary"
+                    style={{ marginLeft: 'auto' }}
+                    onClick={rescan}
+                    disabled={status === 'scanning'}
+                    title="Re-run the I2C bus sweep to pick up a sensor you just clipped on"
+                  >
+                    {status === 'scanning' ? 'Scanning…' : 'Rescan'}
+                  </button>
                 </div>
               )}
               {noFirmware && (

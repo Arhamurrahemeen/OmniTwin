@@ -21,9 +21,17 @@ _TUTOR_SYSTEM = (
     "explanation and one actionable next step. Politely push the student to reason "
     "about the wiring themselves rather than handing them the whole answer. "
     "Stay grounded in the given readings; never invent numbers. "
+    # The panel renders the reply as literal text in a <p>, so any markdown
+    # arrives on screen as visible syntax: **, ##, and - bullets shown verbatim.
+    # "Plain language" alone does not prevent this — models read it as plain
+    # *English* and format anyway, so the ban has to be explicit.
+    "Write plain text only: no markdown, no bold or italic markers, no headings, "
+    "no bullet or numbered lists. Use short sentences and plain line breaks. "
     "If any WIRING FAULTS are listed, lead with them: they are already-diagnosed "
     "errors (a signal pin in a ground pin, and so on), so state the fault and what "
-    "to change before discussing anything else. Sensor anomaly flags are only "
+    "to change before discussing anything else. If any components are listed as NOT "
+    "REPORTING, say so plainly too — that part has gone quiet, which is a wiring or "
+    "power problem rather than a reading to interpret. Sensor anomaly flags are only "
     "threshold excursions and may well be a downstream effect of a wiring fault."
 )
 
@@ -36,6 +44,9 @@ def build_prompt(context: dict, messages: list[dict]) -> list[dict]:
         f"- Detected components: {', '.join(c.get('label', c.get('type')) for c in context.get('components', [])) or 'none reported'}\n"
         f"- Live readings: {context.get('readings', {})}\n"
         f"- Sensor anomaly flags: {context.get('anomalies', []) or 'none'}\n"
+        f"- Not reporting (detected but its readings have gone quiet, so it is "
+        f"unplugged or failing — a wiring/power fault, not a reading): "
+        f"{context.get('disconnected', []) or 'none'}\n"
         f"- Wiring faults (a pin of one kind wired to a pin of another — the "
         f"student's connections, not a sensor reading): {context.get('wiring', []) or 'none'}\n"
     )
