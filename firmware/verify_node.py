@@ -1,4 +1,4 @@
-"""One-shot firmware protocol verification for the OmniTwin node.
+r"""One-shot firmware protocol verification for the OmniTwin node.
 
 Talks to the board over the same COM port the browser's Web Serial bridge uses,
 and checks the fw-1.1 contract that landed on `main`:
@@ -31,6 +31,14 @@ def check(name, ok, detail=""):
 
 def main(port):
     s = serial.Serial(port, BAUD, timeout=0.4)
+    # The CP210x auto-reset circuit wires DTR->EN and RTS->IO0, so merely opening
+    # the port resets an ESP32. Drop both lines so we do not restart the chip
+    # mid-conversation and lose the first command to a still-booting app.
+    try:
+        s.dtr = False
+        s.rts = False
+    except Exception:
+        pass
     buf = ""
 
     def drain(seconds=1.2):
@@ -62,11 +70,19 @@ def main(port):
         return got[0] if got else None
 
     # proto_selftest() runs at boot. An assert failure aborts and reboots, so a
-    # board that answers at all has already passed its eight self-tests.
+    # board that answers at all has already passed its eight self-tests. Retry
+    # IDENT because the port open can reset the chip, and the first command sent
+    # to a still-booting app is simply lost.
     print(f"\n== OmniTwin node verification on {port} @ {BAUD} ==\n")
 
     print("-- boot / self-test --")
-    ident = send("IDENT", 2.5)
+    ident = None
+    for attempt in range(4):
+        ident = send("IDENT", 2.0)
+        if ident:
+            break
+        print(f"        no reply yet (attempt {attempt + 1}/4) - still booting?")
+        time.sleep(1.5)
     check("board answers IDENT (proto_selftest asserts passed at boot)", ident is not None,
           json.dumps(ident) if ident else "no reply")
     if ident is None:

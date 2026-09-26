@@ -81,7 +81,8 @@ static cmd_t parse_cmd(const char *line)   /* see proto_selftest */
     else if (strcmp(line, "STREAM off") == 0)return CMD_STREAM_OFF;
     else if (strcmp(line, "PING") == 0)      return CMD_PING;
     else if (strcmp(line, "DIAG") == 0)      return CMD_DIAG;
-    else if (strncmp(line, "WHOAMI ", 7) == 0) return CMD_WHOAMI;
+    /* Accept the bare verb and the verb+args forms, but not "WHOAMIT ...". */
+    else if (strncmp(line, "WHOAMI", 6) == 0 && (line[6] == '\0' || line[6] == ' ')) return CMD_WHOAMI;
     return CMD_NONE;
 }
 
@@ -118,6 +119,8 @@ static void proto_selftest(void)
     /* WHOAMI argument parsing: the browser supplies the register from the
        component registry, so firmware holds no per-sensor knowledge. */
     assert(parse_cmd("WHOAMI 104 117") == CMD_WHOAMI);
+    assert(parse_cmd("WHOAMI") == CMD_WHOAMI);          /* bare verb: bad args -> whoami:-1 */
+    assert(parse_cmd("WHOAMIT 104 117") == CMD_NONE);   /* not our verb */
     assert(parse_whoami("WHOAMI 104 117").ok);
     assert(parse_whoami("WHOAMI 104 117").addr == 104);
     assert(parse_whoami("WHOAMI 104 117").reg == 117);
