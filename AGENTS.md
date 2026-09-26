@@ -180,19 +180,21 @@ Playwright MCP server is configured with `--browser msedge` and
   is testable under `node --test`. Keep new logic there, not in
   `serialBridge.js`, which is the thin un-testable wrapper.
 - `docs/tasks/task-N.md` and `docs/superpowers/{plans,specs}/` hold the
-  spec-driven task briefs and design docs. Check them before re-litigating a
-  past decision. The **current** spec for the universal-detection/canvas work
-  is `.superpowers/sdd/2026-09-26-omnitwin-universal-detection-canvas-design.md`
-  — that path is real, and `.superpowers/sdd/<slug>/` also holds per-plan SDD
-  artifacts (`plan-path`, `progress.md`, task briefs, review diffs). The
-  `2026-09-23-*` specs still live in `docs/superpowers/specs/`.
+  spec-driven task briefs and design docs — **all of them are tracked in git**.
+  Check them before re-litigating a past decision. The current spec for the
+  universal-detection/canvas work is
+  `docs/superpowers/specs/2026-09-26-omnitwin-universal-detection-canvas-design.md`.
+  (`.superpowers/sdd/` is git-ignored scratch — `*` in its own `.gitignore` —
+  and holds only per-plan SDD artifacts: `plan-path`, `progress.md`, task briefs,
+  review diffs. Never put a spec there; it will not be committed.)
 - Frontend assets are author-created SVG (`ComponentSprite.jsx`) — no icon library.
-- **Read `.superpowers/sdd/2026-09-26-omnitwin-universal-detection-canvas-design.md`
+- **Read `docs/superpowers/specs/2026-09-26-omnitwin-universal-detection-canvas-design.md`
   before touching `serialModel.mjs`, `ComponentSprite.jsx`, `TwinCanvas.jsx`, or
   `backend/routers/tutor.py`.** It replaces the hardcoded `I2C_MAP`/`COMPONENTS`
   tables with a data-driven registry, adds pin-`kind` metadata (power/ground/
   signal) for wiring-correctness checks, and extends the tutor to read (and,
-  on explicit approval, patch) student source files. Its implementation plan is
+  on explicit approval, patch) student source files. Its §0 "What landed" records
+  where the build departed from the design and why; its implementation plan is
   `docs/superpowers/plans/2026-09-26-omnitwin-universal-detection-canvas.md`
   (covers §3.1–§3.3; §3.5 tutor-code access is deferred to a later plan).
 

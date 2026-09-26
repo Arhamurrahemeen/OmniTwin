@@ -8,7 +8,7 @@
 
 **Tech Stack:** ESP-IDF 6.0.2 C (firmware, UART0 line-delimited JSON); React 19 + Vite 8 + Web Serial (browser); `node --test` (frontend pure logic); no new npm or pip dependencies.
 
-**Spec:** `.superpowers/sdd/2026-09-26-omnitwin-universal-detection-canvas-design.md`
+**Spec:** `docs/superpowers/specs/2026-09-26-omnitwin-universal-detection-canvas-design.md`
 
 **Scope note:** This plan covers spec §3.1, §3.2, §3.3 only. Spec §3.5 (tutor reads/patches student source files via the File System Access API) is **deferred to a later plan** — it is roughly half the spec's effort, the lowest-confidence part, and nothing in §3.1–§3.3 depends on it. §3.4 (stay web) needs no code: `serialBridge.js`'s three-function surface is already the seam, and this plan does not couple `App.jsx` to `navigator.serial` any further.
 
@@ -61,7 +61,7 @@ No test cycle. Four one-line corrections; each was verified broken or wrong agai
 
 - [ ] **Step 1: Fix the AGENTS.md spec pointer**
 
-AGENTS.md currently claims `.superpowers/sdd/` "doesn't exist in this repo; if you see it referenced elsewhere, it's stale," and points at `docs/superpowers/specs/2026-09-26-omnitwin-universal-detection-canvas-design.md`, which does not exist. The only copy of the spec is `.superpowers/sdd/2026-09-26-omnitwin-universal-detection-canvas-design.md`. Correct both the path and the "that path doesn't exist" claim. Also correct the frontend test command in the same file's Commands block.
+AGENTS.md currently claims `.superpowers/sdd/` "doesn't exist in this repo; if you see it referenced elsewhere, it's stale," and points at `docs/superpowers/specs/2026-09-26-omnitwin-universal-detection-canvas-design.md`, which did not exist at the time — the spec was sitting in the git-ignored `.superpowers/sdd/` scratch directory. Correct the path, drop the "that path doesn't exist" claim, and state that specs belong in `docs/superpowers/specs/`. Also correct the frontend test command in the same file's Commands block.
 
 - [ ] **Step 2: Fix the frontend test command in AGENTS.md and README.md**
 
