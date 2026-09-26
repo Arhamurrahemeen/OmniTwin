@@ -2,7 +2,8 @@ import test from 'node:test'
 import assert from 'node:assert'
 import {
   readLine, parseScan, scanToComponents, defaultLayout,
-  addComponent, moveComponent, addWire, anomalyFlags, withTimeout, scanNotice,
+  addComponent, moveComponent, addWire, removeWire, pinPos, wiresFor,
+  anomalyFlags, withTimeout, scanNotice,
 } from '../src/serial/serialModel.mjs'
 
 test('readLine reassembles a line split across chunks', () => {
@@ -122,16 +123,60 @@ test('defaultLayout places each component uniquely and stores x/y', () => {
   assert.ok(layout.components.every(c => typeof c.x === 'number' && typeof c.y === 'number'))
 })
 
-test('addComponent / moveComponent / addWire mutate layout functionally', () => {
+test('addComponent / moveComponent mutate layout functionally', () => {
   const l0 = defaultLayout([])
   const l1 = addComponent(l0, 'esp32')
   assert.equal(l1.components.length, 1)
   const moved = moveComponent(l1, l1.components[0].id, 10, 20)
   assert.equal(moved.components[0].x, 10)
-  const wired = addWire(moved, l1.components[0].id, 'dht22')
-  assert.equal(wired.wires.length, 1)
-  assert.deepEqual(wired.wires[0].from, l1.components[0].id)
   assert.equal(l0.components.length, 0)   // original untouched
+})
+
+// --- pin-based wires (Task 5) ---
+
+test('addWire stores pin references, not component ids', () => {
+  const l = defaultLayout([{ type: 'esp32' }, { type: 'mpu6050' }])
+  const [esp, mpu] = l.components
+  const w = addWire(l, esp.id, 'SDA', mpu.id, 'SDA')
+  assert.equal(w.wires.length, 1)
+  assert.deepEqual(
+    { f: w.wires[0].fromComponentId, fp: w.wires[0].fromPinId, t: w.wires[0].toComponentId, tp: w.wires[0].toPinId },
+    { f: esp.id, fp: 'SDA', t: mpu.id, tp: 'SDA' }
+  )
+  assert.equal(l.wires.length, 0)   // original untouched
+})
+
+test('addWire rejects an unknown pin and a self-wire', () => {
+  const l = defaultLayout([{ type: 'esp32' }, { type: 'mpu6050' }])
+  const [esp, mpu] = l.components
+  assert.throws(() => addWire(l, esp.id, 'NOPE', mpu.id, 'SDA'), /Unknown pin/)
+  assert.throws(() => addWire(l, esp.id, 'SDA', esp.id, 'GND'), /same component/)
+})
+
+test('pinPos offsets by the registry pin dx/dy, and is 0,0 when the pin is unknown', () => {
+  const l = defaultLayout([{ type: 'mpu6050' }])
+  const mpu = l.components[0]
+  assert.deepEqual(pinPos(mpu, 'SDA'), { x: mpu.x + 58, y: mpu.y + 10 })
+  assert.deepEqual(pinPos(mpu, 'NOPE'), { x: 0, y: 0 })
+  // A component whose type the registry does not define has no pins to offset by.
+  assert.deepEqual(pinPos({ id: 'x1', type: 'nonexistent', x: 5, y: 5 }, 'SDA'), { x: 0, y: 0 })
+})
+
+test('wiresFor finds every wire touching a pin', () => {
+  const l = defaultLayout([{ type: 'esp32' }, { type: 'mpu6050' }])
+  const [esp, mpu] = l.components
+  const wired = addWire(l, esp.id, 'SDA', mpu.id, 'SDA')
+  assert.equal(wiresFor(wired, esp.id, 'SDA').length, 1)
+  assert.equal(wiresFor(wired, esp.id, 'GND').length, 0)
+  assert.equal(wiresFor(wired, mpu.id, 'SDA').length, 1)
+})
+
+test('removeWire drops only the named wire', () => {
+  const l = defaultLayout([{ type: 'esp32' }, { type: 'mpu6050' }])
+  const [esp, mpu] = l.components
+  const wired = addWire(l, esp.id, 'SDA', mpu.id, 'SDA')
+  assert.equal(removeWire(wired, wired.wires[0].id).wires.length, 0)
+  assert.equal(wired.wires.length, 1)   // original untouched
 })
 
 test('anomalyFlags flags NaN, out-of-range, frozen stream', () => {

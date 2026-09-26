@@ -90,8 +90,37 @@ export function moveComponent(layout, id, x, y) {
   }
 }
 
-export function addWire(layout, from, to) {
-  return { ...layout, wires: [...layout.wires, { id: nid(), from, to }] }
+// Wires attach to named pins, not component centres, so a wire can be checked
+// for correctness and rendered from the pin's offset in the registry.
+export function addWire(layout, fromComponentId, fromPinId, toComponentId, toPinId) {
+  for (const [cid, pid] of [[fromComponentId, fromPinId], [toComponentId, toPinId]]) {
+    if (!pinDef(layout.components.find(c => c.id === cid)?.type, pid))
+      throw new Error(`Unknown pin: ${cid}.${pid}`)
+  }
+  if (fromComponentId === toComponentId)
+    throw new Error('Wire ends on the same component')
+  return {
+    ...layout,
+    wires: [...layout.wires, { id: nid(), fromComponentId, fromPinId, toComponentId, toPinId }],
+  }
+}
+
+export function removeWire(layout, wireId) {
+  return { ...layout, wires: layout.wires.filter(w => w.id !== wireId) }
+}
+
+// Screen position of a pin: the component's x/y plus the pin's registry offset.
+// Falls back to {0,0} when the component or pin is unknown, which is also the
+// signal callers use to skip an unresolvable wire.
+export function pinPos(component, pinId) {
+  const pin = pinDef(component?.type, pinId)
+  return pin ? { x: component.x + pin.dx, y: component.y + pin.dy } : { x: 0, y: 0 }
+}
+
+export function wiresFor(layout, componentId, pinId) {
+  return layout.wires.filter(w =>
+    (w.fromComponentId === componentId && w.fromPinId === pinId) ||
+    (w.toComponentId === componentId && w.toPinId === pinId))
 }
 
 // Try each board adapter's IDENT dialect in turn and take the first that
