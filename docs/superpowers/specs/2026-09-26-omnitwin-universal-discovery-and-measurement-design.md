@@ -95,15 +95,75 @@ entire value of the product — the old hardcoded `always.esp32` entry described
 
 ### 2.1 Three ways a channel gets its value
 
-| Source | Example | Confidence |
+| Source | Example | What we may claim |
 |---|---|---|
-| **declared** — in the source only | `0x68` on the I2C bus | the student wired it; we believe them |
-| **reported** — printed at runtime | `temp=24.3` on the serial log | measured |
+| **reported** — printed at runtime | `temp=24.3` on the serial log | measured; this is fact |
+| **declared** — in the source only | `0x68`, `Wire.begin(21,22)` | the student *intends* this; unverified |
 | **absent** — neither | a DHT22 with no code and no output | render `⚠ not reporting` |
 
 `notReporting` already exists in the codebase and covers the third case. A
 channel that is declared but never reported is exactly the badge it was built
 for — no new mechanism required.
+
+### 2.2 Declared is never presented as fact
+
+> **The canvas draws what the code *declares*, labelled as declared. It must not
+> assert it as measured hardware.**
+
+Source code is a **claim** about hardware, not a measurement of it. A student may
+have written `pinMode(13, OUTPUT)` and then wired 14, or copied a tutorial and
+adapted half of it. The breadboard is what electrons obey.
+
+Presenting a declaration as fact is dangerous in a specific way: the tutor then
+reasons *from the drawing*, and will tell the student "your SDA is on GPIO21",
+reinforcing a belief that is wrong. That is the same failure class as the fake
+`0.000 g` and the `no data yet` badge that once badged every sprite — OmniTwin
+would become the thing that misleads them. `temp: null` not `temp: 0`;
+`ok: false` not a green tick. Same rule, new surface.
+
+**Not nagging, though.** If every pin asked "confirm?", the student clicks
+through it and the signal is lost. So: **one banner** above the canvas — *"Hardware
+derived from your source — confirm it matches your board"* — with the drawing
+normal underneath and a single dismiss action. Not a modal per pin.
+
+### 2.3 Confidence varies with how it was inferred
+
+Not all declarations are equal, and treating a weak signal like a strong one is
+its own kind of overclaim:
+
+| Evidence in source | Confidence | What we say |
+|---|---|---|
+| Explicit numeric literals — `Wire.begin(21, 22)`, `0x68`, `pinMode(13, …)` | **strong** | "Your code says SDA→21, SCL→22" |
+| Library present, pin not determinable — `#include <DHT.h>` | **weak** | "DHT library in use; pin not declared in code" |
+| Nothing | none | say nothing; the part is simply absent |
+
+This matters most for large third-party firmware. Inferring a whole sensor suite
+from a Cleanflight or Betaflight source tree must not read with the same
+confidence as a student's own `Wire.begin`.
+
+### 2.4 Confirmation is data, not just honesty
+
+The banner is not only an honesty device — **it collects information that
+redirects the tutor.** "Everything checks out and it still doesn't work" is a
+meaningful answer, and it tells the tutor to stop reasoning about wiring and
+start reasoning about code. Without a way for the student to say that, the tutor
+keeps re-litigating wiring the student has already ruled out — one of the most
+frustrating things a helper can do.
+
+This catches the most common real embedded fault: **code correct, hardware
+wrong.** That case is invisible to a tool that trusts the code, and obvious to one
+that asks.
+
+### 2.5 The canvas is a view of the source, not a second model
+
+Derived hardware is a **projection** of the code, so editing a pin constant
+updates the drawing and the twin can never drift from the program. No sync
+question, no "is the canvas current?" check.
+
+Wires derivable from code come free (`Wire.begin(21,22)` plus an `0x68` access
+implies SDA/SCL to that address). Only what code genuinely cannot express — a
+power rail, a one-wire data line — is drawn by hand, and those are the student's
+corrections rather than a competing source of truth.
 
 ## 3. Code is half the product
 
@@ -156,9 +216,15 @@ note; absent code is a guarantee.
 
 ## 5. Canvas
 
-Same canvas as today, with one change: **parts come from the student's source
-rather than from a fixed registry scan.** Wires are drawn and checked with the
-existing `kind` comparison (power/ground/signal), and faults feed the tutor.
+Same canvas as today, with two changes:
+
+1. **Parts come from the student's source** rather than from a fixed registry
+   scan, so the drawing shows *their* rig rather than ours.
+2. **Derived wiring is labelled as derived**, per §2.2 — a single banner, not
+   per-pin nagging, and confidence-tiered per §2.3.
+
+Wires are drawn and checked with the existing `kind` comparison
+(power/ground/signal), and faults feed the tutor.
 
 The teaching label stays honest: colour is by pin *kind*, not a simulation of
 voltage or current. Nothing in a student project can measure current, and the UI
@@ -219,17 +285,18 @@ intended: a board contributes channels, and the student's source names the parts
 
 ## 8. Open questions
 
-1. **How much of the hardware can be trusted from source alone?** A student who
-   writes `Wire.begin(21,22)` has declared intent, not proof. Does the canvas
-   present declared wiring as fact, or as "your code says X — confirm it"?
-   Leaning towards labelling it as declared, for the same honesty reason as §1.
-2. **Silent projects are the main gap.** Is a nudge ("add a `Serial.print` to
+1. **Silent projects are the main gap.** Is a nudge ("add a `Serial.print` to
    see values") enough, or should the tutor offer to write that one line for
    them?
-3. **What is a non-C project?** PlatformIO projects, MicroPython, Arduino
+2. **What is a non-C project?** PlatformIO projects, MicroPython, Arduino
    sketches in `.ino` with auto-generated prototypes — the static pass has to
    tolerate all of them, and `.ino` in particular has no function declarations
    to work from.
+3. **How coarse should confirmation be?** §2.2 settles the labelling and §2.4
+   settles that confirmation carries signal. Still open: is dismissing it a
+   per-part checkbox or one banner-level "I've checked" that covers the whole
+   drawing. The per-part version gives the tutor better signal but is more
+   clicking; the banner version is one click and much weaker evidence.
 
 ## 9. Carried-over open items
 
