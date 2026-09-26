@@ -46,9 +46,26 @@ cd frontend; npm run build
 # Firmware (needs ESP-IDF v6.0.2 active)
 cd firmware\twinlab_node_v1; idf.py build
 idf.py -p COM3 flash
+
+# Verify the node's protocol over serial (no browser, no dashboard)
+& "C:\Users\Arham\.espressif\python_env\idf6.0_py3.13_env\Scripts\python.exe" `
+    firmware\verify_node.py COM3
 ```
 
 ## Gotchas
+
+**ESP-IDF lives at `C:\esp\v6.0.2\esp-idf` but is not on `PATH`.** Activate it
+per shell before `idf.py`:
+`$env:IDF_PATH="C:\esp\v6.0.2\esp-idf"; & "$env:IDF_PATH\export.ps1"`.
+If the project was last configured against a different Python env, `idf.py build`
+refuses until you run `idf.py fullclean` (removes only regenerable build output).
+
+**`proto_selftest()`'s asserts only run on flashed hardware.** A green
+`idf.py build` proves the C compiles, nothing more — and this box has no board and
+no host C compiler, only ESP cross-compilers. Because ESP-IDF's `assert` aborts on
+failure, a board that boots and then answers `IDENT` has already passed every
+self-test; a failing assert shows up as a reboot loop. Use
+`firmware/verify_node.py` to check the wire protocol end to end after a flash.
 
 **`run.ps1` hardcodes `D:\OmniTwin\.venv\Scripts\python` and both working
 directories.** It will not work if the repo moves, and the venv must exist

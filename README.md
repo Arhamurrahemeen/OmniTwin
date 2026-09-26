@@ -37,7 +37,11 @@ Spawns the backend and the dashboard:
 - Dashboard: http://localhost:5173
 - API docs: http://localhost:8000/docs
 
-Plug in the ESP32, click **Connect your ESP32**, pick its COM port, and the twin canvas fills in from the board's scan. Note the venv python path is hardcoded in `run.ps1` — create it first (see Setup).
+Plug in the ESP32, click **Connect your ESP32**, pick its COM port, and the twin canvas fills in from the board's scan. Then wire it up: click a pin, then a pin on another part. Wires are colour-coded by pin kind (red power, dark grey ground, dashed green signal/data) and a wrong connection is flagged by name — "SDA (GPIO21) wired to GND (MPU6050)" — for free, with no AI call. Click a wired pin to detach it. "Show reference wiring" overlays how the board is actually configured, which is the firmware's fixed pin map, not a read of your jumper wires.
+
+Nothing found, or you want to correct the scan? `+ Add component` always works — it's the correctness backstop. If no OmniTwin firmware answers on the port, the canvas drops into manual mode and releases the port so you can flash.
+
+Note the venv python path is hardcoded in `run.ps1` — create it first (see Setup).
 
 The board works even with sensors unplugged: IDENT/PING/SCAN answer and the stream degrades to DHT-only rows (accel `null`) when the MPU is absent. The full 2D twin and anomaly flags need the kit attached. SCAN can take ~12 s on an empty bus — wait for the status to reach `streaming`.
 
@@ -52,7 +56,10 @@ node --test "frontend/tests/*.test.mjs"
 
 - `backend/` — FastAPI app (`main:app`): device roster, demo-kit quota, on-demand `/tutor` (Groq, key server-side)
 - `frontend/` — student dashboard: USB connect → scan → 2D digital twin canvas + AI tutor chat
+- `frontend/src/registry/` — the component registry: `components.json` is the single source of truth for part identity, pin kinds, and which readings belong to a part. Adding a sensor is an entry here, not a code change.
+- `frontend/src/serial/adapters/` — board adapters. Each owns one firmware dialect's commands and parsers; the dashboard holds no protocol knowledge of its own.
 - `firmware/` — ESP32 sensor firmware, UART0 JSON protocol (see `docs/tasks/task-11.md` for build/flash)
+- `firmware/verify_node.py` — checks the node's wire protocol over serial after a flash, without a browser
 - `run.ps1` — local launcher (backend + dashboard)
 
 ## Environment
