@@ -19,7 +19,7 @@ def test_build_prompt_is_openai_shaped():
     assert msgs[-1]["role"] == "user" and msgs[-1]["content"] == "why hot?"
 
 
-def test_build_prompt_never_leaks_key(tmp_path):
+def test_build_prompt_never_leaks_key():
     prompt = llm.build_prompt(_ctx(), [{"role": "user", "content": "hi"}])
     assert "\n".join(str(m) for m in prompt).find("GROQ_API_KEY") == -1
 
