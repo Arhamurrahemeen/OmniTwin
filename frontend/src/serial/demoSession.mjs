@@ -16,13 +16,21 @@ export class DemoSession {
   async close() { this._stop() }
 
   async command(cmd) {
-    switch (cmd.trim()) {
+    const line = cmd.trim()
+    // WHOAMI <addr> <reg> — the 1.1 identity read. Mirrors the firmware: -1
+    // when the address does not answer, which the browser maps to null.
+    if (line.startsWith('WHOAMI')) {
+      const addr = parseInt(line.split(/\s+/)[1], 10)
+      return { whoami: (addr === 104 || addr === 105) ? 0x68 : -1 }
+    }
+    switch (line) {
       case 'IDENT':
-        return { id: 'demo-esp32', board: 'ESP32-DevKitC V4', fw: '1.0' }
+        return { id: 'demo-esp32', board: 'ESP32-DevKitC V4', fw: '1.1' }
       case 'PING':
         return { pong: true }
       case 'SCAN':
-        return { i2c: [{ addr: 104, name: 'mpu6050' }], dht22: { gpio: 4, ok: true }, bus: { sda_up: true, scl_up: true } }
+        // 1.1 shape: raw address only, no firmware-supplied part name.
+        return { i2c: [{ addr: 104 }], dht22: { gpio: 4, ok: true }, bus: { sda_up: true, scl_up: true } }
       case 'STREAM on':
         this.streaming = true
         this.timer = setInterval(() => this._emit(), 250)

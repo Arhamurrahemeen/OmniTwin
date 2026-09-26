@@ -62,6 +62,13 @@ test('scanToComponents tolerates the bus{} block in the SCAN reply', () => {
 // These pin the refactor's contract: same behaviour as before for every case
 // the old I2C_MAP handled, plus WHOAMI identity where the two disagree.
 
+test('scanToComponents resolves the 1.1 SCAN shape (raw address, no name field)', () => {
+  const s = parseScan('{"i2c":[{"addr":104}],"dht22":{"gpio":4,"ok":true}}')
+  const types = scanToComponents(s).map(c => c.type)
+  assert.ok(types.includes('mpu6050'))
+  assert.equal(scanNotice(s), 'SCAN: ESP32 + MPU6050, DHT22')
+})
+
 test('scanToComponents ignores an address no registry entry claims', () => {
   const s = parseScan('{"i2c":[{"addr":72,"name":null}],"dht22":{"gpio":4,"ok":true}}')
   const types = scanToComponents(s).map(c => c.type)

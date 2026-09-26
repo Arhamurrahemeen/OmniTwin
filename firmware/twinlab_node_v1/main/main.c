@@ -64,7 +64,11 @@ static bool g_sda_up = false, g_scl_up = false;  /* pull-up snapshot at boot */
 
 /* ---- protocol types + helpers (Task 1 selftests reference these) ---------- */
 
-typedef enum { CMD_IDENT, CMD_SCAN, CMD_STREAM_ON, CMD_STREAM_OFF, CMD_PING, CMD_DIAG, CMD_NONE } cmd_t;
+typedef enum { CMD_IDENT, CMD_SCAN, CMD_STREAM_ON, CMD_STREAM_OFF, CMD_PING, CMD_DIAG, CMD_WHOAMI, CMD_NONE } cmd_t;
+
+/* Parsed "WHOAMI <addr> <reg>". ok is false for a missing, malformed, or
+   out-of-range argument — the 7-bit I2C range is 0x08..0x77. */
+typedef struct { int addr; int reg; bool ok; } whoami_arg_t;
 
 static cmd_t parse_cmd(const char *line)   /* see proto_selftest */
 {
@@ -74,7 +78,21 @@ static cmd_t parse_cmd(const char *line)   /* see proto_selftest */
     else if (strcmp(line, "STREAM off") == 0)return CMD_STREAM_OFF;
     else if (strcmp(line, "PING") == 0)      return CMD_PING;
     else if (strcmp(line, "DIAG") == 0)      return CMD_DIAG;
+    else if (strncmp(line, "WHOAMI", 6) == 0) return CMD_WHOAMI;
     return CMD_NONE;
+}
+
+static whoami_arg_t parse_whoami(const char *line)
+{
+    whoami_arg_t a = { 0, 0, false };
+    char tail;
+    /* "%i" takes decimal or 0x-hex; the "%c" catch rejects trailing junk.
+       "WHOAMI" alone fails the %i match, so it is rejected too. */
+    if (sscanf(line, "WHOAMI %i %i %c", &a.addr, &a.reg, &tail) != 2) return a;
+    if (a.addr < 0x08 || a.addr > 0x77) return a;
+    if (a.reg < 0 || a.reg > 0xFF) return a;
+    a.ok = true;
+    return a;
 }
 
 static void proto_selftest(void)
@@ -93,6 +111,17 @@ static void proto_selftest(void)
     assert(strcmp(buf, "{\"pong\":true}") == 0);
     snprintf(buf, sizeof buf, "{\"stream\":\"%s\"}", "on");
     assert(strcmp(buf, "{\"stream\":\"on\"}") == 0);
+
+    /* WHOAMI argument parsing: the browser supplies the register from the
+       component registry, so firmware holds no per-sensor knowledge. */
+    assert(parse_cmd("WHOAMI 104 117") == CMD_WHOAMI);
+    assert(parse_whoami("WHOAMI 104 117").ok);
+    assert(parse_whoami("WHOAMI 104 117").addr == 104);
+    assert(parse_whoami("WHOAMI 104 117").reg == 117);
+    assert(parse_whoami("WHOAMI 104 0x75").reg == 0x75);   /* hex accepted */
+    assert(!parse_whoami("WHOAMI").ok);
+    assert(!parse_whoami("WHOAMI 104").ok);
+    assert(!parse_whoami("WHOAMI 999 117").ok);             /* out of 7-bit range */
 }
 
 /* ---- MPU6050 reads (verbatim from bench firmware) ------------------------ */
@@ -254,22 +283,49 @@ static void dht_task(void *arg)
 
 static void reply_ident(void)
 {
-    printf("{\"device\":\"ESP32\",\"fw\":\"1.0\",\"board\":\"twinlab-node\",\"id\":\"%s\"}\n", g_device_id);
+    printf("{\"device\":\"ESP32\",\"fw\":\"1.1\",\"board\":\"twinlab-node\",\"id\":\"%s\"}\n", g_device_id);
+}
+
+/* Read one WHOAMI register from an arbitrary address. The browser supplies the
+   register number from its component registry, so firmware holds no per-sensor
+   knowledge and adding a part needs no firmware change. -1 means "no answer",
+   which the browser maps to null. */
+/* ponytail: add/remove the device handle on every call instead of caching it.
+   WHOAMI fires a handful of times per SCAN, never per stream row. Cache handles
+   by address only if this ever shows up in a hot path. */
+static void reply_whoami(int addr, int reg)
+{
+    i2c_device_config_t cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address  = (uint16_t)addr,
+        .scl_speed_hz    = 100000,   /* 100kHz tolerates marginal breadboard wiring */
+    };
+    i2c_master_dev_handle_t dev = NULL;
+    uint8_t val = 0;
+    int out = -1;
+
+    if (i2c_master_bus_add_device(bus, &cfg, &dev) == ESP_OK) {
+        if (i2c_master_transmit_receive(dev, (const uint8_t[]){ (uint8_t)reg }, 1, &val, 1, 100) == ESP_OK)
+            out = val;
+        i2c_master_bus_rm_device(dev);
+    }
+    printf("{\"whoami\":%d}\n", out);
 }
 
 static void reply_scan(void)
 {
-    /* I2C 7-bit sweep 0x03..0x77; 0x68/0x69 -> mpu6050, anything else -> null name.
-       Short probe timeout so a dead/clamped bus returns in ~1s instead of 12s. */
+    /* I2C 7-bit sweep 0x03..0x77. This reports the raw ACK'd address only —
+       part identity is the browser's job, via the WHOAMI command and its
+       component registry. Short probe timeout so a dead/clamped bus returns
+       in ~1s instead of 12s. */
     char list[512] = "";
     int n = 0;
     for (int addr = 0x03; addr <= 0x77; addr++) {
         /* 100ms probe on the MPU addresses (a flaky MPU ACKs slowly), 25ms elsewhere. */
         int timeout = (addr == MPU_ADDR || addr == MPU_ADDR_ALT) ? 100 : 25;
         if (i2c_master_probe(bus, addr, timeout) == ESP_OK) {
-            const char *name = (addr == MPU_ADDR || addr == MPU_ADDR_ALT) ? "\"mpu6050\"" : "null";
-            n += snprintf(list + n, sizeof list - n, "%s{\"addr\":%d,\"name\":%s}",
-                          (n > 0) ? "," : "", addr, name);
+            n += snprintf(list + n, sizeof list - n, "%s{\"addr\":%d}",
+                          (n > 0) ? "," : "", addr);
             if (n >= (int)sizeof list - 32) break;
         }
     }
@@ -308,7 +364,7 @@ static void reply_diag(void)
            whoami, pwr, pwr_after, cfg, accel_cfg, ax_raw);
 }
 
-static void handle_cmd(cmd_t cmd)
+static void handle_cmd(cmd_t cmd, const char *line)
 {
     switch (cmd) {
         case CMD_IDENT:      reply_ident();   break;
@@ -317,6 +373,12 @@ static void handle_cmd(cmd_t cmd)
         case CMD_STREAM_OFF: g_stream_on = false; printf("{\"stream\":\"off\"}\n"); break;
         case CMD_PING:       printf("{\"pong\":true}\n"); break;
         case CMD_DIAG:       reply_diag();    break;
+        case CMD_WHOAMI: {
+            whoami_arg_t a = parse_whoami(line);
+            if (a.ok) reply_whoami(a.addr, a.reg);
+            else printf("{\"whoami\":-1}\n");
+            break;
+        }
         default:             printf("{\"error\":\"unknown command\"}\n"); break;
     }
 }
@@ -334,7 +396,7 @@ static void uart_task(void *arg)
             if (buf[i] == '\n' || buf[i] == '\r') {
                 if (len > 0) {
                     line[len] = '\0';
-                    handle_cmd(parse_cmd(line));
+                    handle_cmd(parse_cmd(line), line);
                     len = 0;
                 }
             } else if (len < LINE_MAXLEN - 1) {
