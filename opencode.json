@@ -1,0 +1,34 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "plugins": ["superpowers@git+https://github.com/obra/superpowers.git"],
+  "mcp": {
+    "timeout": {
+      "startup": 180000
+    },
+    "servers": {
+      "mongodb": {
+        "type": "local",
+        "command": ["npx", "-y", "mongodb-mcp-server@latest", "--readOnly"],
+        "environment": {
+          "MDB_MCP_CONNECTION_STRING": "{env:MDB_MCP_CONNECTION_STRING}"
+        }
+      },
+      "context7": {
+        "type": "remote",
+        "url": "https://mcp.context7.com/mcp"
+      },
+      "playwright": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "@playwright/mcp@latest",
+          "--browser",
+          "msedge",
+          "--output-dir",
+          "docs/PPTx/screenshots"
+        ]
+      }
+    }
+  }
+}

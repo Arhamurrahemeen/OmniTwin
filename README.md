@@ -28,16 +28,37 @@ GROQ_API_KEY=sk-...
 
 ## Run
 
+### Full stack (backend + dashboard)
 ```powershell
 powershell -File .\run.ps1
 ```
 
-Spawns the backend and the dashboard:
+Spawns both services:
 
 - Dashboard: http://localhost:5173
 - API docs: http://localhost:8000/docs
 
+### Dashboard only (dev mode with hot reload)
+```powershell
+cd frontend; npm run dev
+```
+Runs Vite on the next available port (e.g., 5173, 5174, 5175...).
+
+### Backend only
+```powershell
+cd backend; .\.venv\Scripts\uvicorn.exe main:app --host 0.0.0.0 --port 8000
+```
+
+### Stop everything
+```powershell
+powershell -File .\run.ps1 -Stop
+```
+
+---
+
 Plug in the ESP32, click **Connect your ESP32**, pick its COM port, and the twin canvas fills in from the board's scan. Then wire it up: click a pin, then a pin on another part. Wires are colour-coded by pin kind (red power, dark grey ground, dashed green signal/data) and a wrong connection is flagged by name — "SDA (GPIO21) wired to GND (MPU6050)" — for free, with no AI call. Click a wired pin to detach it. "Show reference wiring" overlays how the board is actually configured, which is the firmware's fixed pin map, not a read of your jumper wires.
+
+**Source-derived mode (Option B):** Open the **Code** tab (right sidebar), click **Select Folder**, grant access to a student's firmware project (.c, .h, .ino, .cpp). OmniTwin parses `Wire.begin()`, I2C addresses, DHT pins, `pinMode`, libraries — and populates the canvas with "D"-badged components labelled "declared in code". A banner reads: *"Hardware derived from your source code — confirm it matches your board"*. The tutor sees code flags, wiring flags, and live sensor anomalies together.
 
 Nothing found, or you want to correct the scan? `+ Add component` always works — it's the correctness backstop. If no OmniTwin firmware answers on the port, the canvas drops into manual mode and releases the port so you can flash.
 
@@ -58,8 +79,10 @@ node --test "frontend/tests/*.test.mjs"
 - `frontend/` — student dashboard: USB connect → scan → 2D digital twin canvas + AI tutor chat
 - `frontend/src/registry/` — the component registry: `components.json` is the single source of truth for part identity, pin kinds, and which readings belong to a part. Adding a sensor is an entry here, not a code change.
 - `frontend/src/serial/adapters/` — board adapters. Each owns one firmware dialect's commands and parsers; the dashboard holds no protocol knowledge of its own.
+- `frontend/src/code/` — source-derived detection: `parser.mjs` (C/Arduino parser), `codeFlags.mjs` (static analysis), `CodeTab.jsx` (folder picker + editor)
 - `firmware/` — ESP32 sensor firmware, UART0 JSON protocol (see `docs/tasks/task-11.md` for build/flash)
 - `firmware/verify_node.py` — checks the node's wire protocol over serial after a flash, without a browser
+- `twinlab_arduino_v1.ino` — Arduino Uno/Nano sketch, same JSON-over-serial protocol as ESP32 firmware
 - `run.ps1` — local launcher (backend + dashboard)
 
 ## Environment

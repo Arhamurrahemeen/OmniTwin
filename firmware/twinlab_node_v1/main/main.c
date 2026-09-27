@@ -345,6 +345,13 @@ static void reply_whoami(int addr, int reg)
     printf("{\"whoami\":%d}\n", out);
 }
 
+/* One-shot DHT22 read for SCAN — doesn't wait for background task. */
+static bool dht_read_once(float *temp, float *hum)
+{
+    gpio_set_pull_mode(DHT_IO, GPIO_PULLUP_ONLY);
+    return dht_read(temp, hum);
+}
+
 static void reply_scan(void)
 {
     /* I2C 7-bit sweep 0x03..0x77. This reports the raw ACK'd address only —
@@ -362,7 +369,9 @@ static void reply_scan(void)
             if (n >= (int)sizeof list - 32) break;
         }
     }
-    bool dht_ok = !isnan(g_temp);   /* last-known-good sample from dht_task; don't bit-bang here */
+    /* One-shot DHT22 probe for SCAN — doesn't wait for background task. */
+    float t, h;
+    bool dht_ok = dht_read_once(&t, &h);
     printf("{\"i2c\":[%s],\"dht22\":{\"gpio\":%d,\"ok\":%s},\"bus\":{\"sda_up\":%s,\"scl_up\":%s}}\n",
            list, DHT_IO, dht_ok ? "true" : "false",
            g_sda_up ? "true" : "false", g_scl_up ? "true" : "false");
@@ -511,15 +520,6 @@ static void stream_task(void *arg)
 
 void app_main(void)
 {
-    /* This UART0 is the Web Serial protocol channel — it must carry only JSON.
-       Any ESP log (DHT failures, I2C timeouts, MPU retries) can interleave
-       mid-printf and corrupt the line the browser parses. Silence everything
-       FIRST, before proto_selftest or the bus check below can log anything:
-       this used to sit after those calls, so the boot banner and two INFO
-       lines reached the browser on every cold start. State is conveyed via the
-       JSON itself (temp:null, ok:false, ax:null). */
-    esp_log_level_set("*", ESP_LOG_NONE);
-
     proto_selftest();
     dht_selftest();
 
@@ -545,9 +545,20 @@ void app_main(void)
     ESP_ERROR_CHECK(uart_param_config(UART_NUM_0, &uart_cfg));
     /* UART0 pins: TX=1, RX=3 by default — leave default (console bridge). */
 
+    i2c_master_bus_config_t bus_cfg = {
+        .clk_source = I2C_CLK_SRC_DEFAULT,
+        .i2c_port   = -1,
+        .sda_io_num = SDA_IO,
+        .scl_io_num = SCL_IO,
+        .glitch_ignore_cnt = 7,
+        .flags.enable_internal_pullup = true,
+    };
+    ESP_ERROR_CHECK(i2c_new_master_bus(&bus_cfg, &bus));
+
+    /* Pull-up check AFTER I2C init (internal pullups now enabled). */
     bool sda_up = line_pulled_up(SDA_IO);
     bool scl_up = line_pulled_up(SCL_IO);
-    g_sda_up = sda_up;   /* snapshot for SCAN/DIAG replies (logs get silenced below) */
+    g_sda_up = sda_up;
     g_scl_up = scl_up;
     ESP_LOGI(TAG, "bus check: SDA(%d)=%s SCL(%d)=%s", SDA_IO,
              sda_up ? "pulled up" : "FLOATING", SCL_IO,
@@ -558,15 +569,12 @@ void app_main(void)
         ESP_LOGE(TAG, "one line floating -> that signal wire is not connected");
     }
 
-    i2c_master_bus_config_t bus_cfg = {
-        .clk_source = I2C_CLK_SRC_DEFAULT,
-        .i2c_port   = -1,
-        .sda_io_num = SDA_IO,
-        .scl_io_num = SCL_IO,
-        .glitch_ignore_cnt = 7,
-        .flags.enable_internal_pullup = true,
-    };
-    ESP_ERROR_CHECK(i2c_new_master_bus(&bus_cfg, &bus));
+    /* This UART0 is the Web Serial protocol channel — it must carry only JSON.
+       Any ESP log (DHT failures, I2C timeouts, MPU retries) can interleave
+       mid-printf and corrupt the line the browser parses. Silence everything
+       AFTER startup diagnostics. State is conveyed via the
+       JSON itself (temp:null, ok:false, ax:null). */
+    esp_log_level_set("*", ESP_LOG_NONE);
 
     xTaskCreatePinnedToCore(uart_task,   "uart"  , 4096, NULL, 8, NULL, 0);
     xTaskCreatePinnedToCore(dht_task,    "dht"   , 3072, NULL, 5, NULL, 1);

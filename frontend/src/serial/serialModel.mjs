@@ -121,6 +121,17 @@ export function removeComponent(layout, componentId) {
   }
 }
 
+// Merge auto-detected/declared components into an existing layout, preserving
+// manual positions. Adds only components not already present (by type for
+// always/auto, by id for declared).
+export function mergeLayout(prev, comps) {
+  const existingTypes = new Set(prev.components.map(c => c.type))
+  const missing = comps.filter(c => !existingTypes.has(c.type))
+  let out = { ...prev }
+  for (const c of missing) out = addComponent(out, c.type)
+  return out
+}
+
 // Screen position of a pin: the component's x/y plus the pin's registry offset.
 // Falls back to {0,0} when the component or pin is unknown, which is also the
 // signal callers use to skip an unresolvable wire.

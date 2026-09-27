@@ -1,15 +1,17 @@
 /* OmniTwin dashboard: connect USB board (Web Serial) -> scan -> twin canvas + tutor. */
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import TwinCanvas from './components/TwinCanvas'
 import TutorPanel from './components/TutorPanel'
+import CodeTab from './code/CodeTab'
 import { supportsSerial, requestPort, SerialSession } from './serial/serialBridge'
 import { DemoSession } from './serial/demoSession.mjs'
 import ADAPTER from './serial/adapters/twinlab_esp32_v1'
 import {
   defaultLayout, parseScan, detectAdapter, detectComponents, scanNotice,
-  addComponent, removeComponent, moveComponent, addWire, removeWire, anomalyFlags, partFaults, wiringFlags, componentDef, notReporting,
+  addComponent, removeComponent, moveComponent, addWire, removeWire, anomalyFlags, partFaults, wiringFlags, componentDef, notReporting, mergeLayout, isKnown,
 } from './serial/serialModel.mjs'
 import { askTutor } from './api'
+import { formatCodeFlagsForTutor } from './code/codeFlags'
 import wordmark from './assets/wordmark.png'
 import './App.css'
 
@@ -23,15 +25,6 @@ let activeAdapter = ADAPTER
 const isDemo = () => new URLSearchParams(window.location.search).has('demo')
 const isTutorDemo = () => new URLSearchParams(window.location.search).has('tutor')
 
-const mergeLayout = (prev, comps) => {
-  // keep existing manual layout, add any auto-detected components not yet placed
-  const existingTypes = new Set(prev.components.map(c => c.type))
-  const missing = comps.filter(c => !existingTypes.has(c.type))
-  let out = { ...prev }
-  for (const c of missing) out = addComponent(out, c.type)
-  return out
-}
-
 export default function App() {
   const [status, setStatus] = useState('needPort') // needPort|connecting|scanning|streaming|manual|error
   const [layout, setLayout] = useState(() => defaultLayout([]))
@@ -41,6 +34,9 @@ export default function App() {
   const [tutor, setTutor] = useState(null)     // { messages, reply, error, sessionId }
   const [scanInfo, setScanInfo] = useState(null) // result of the last SCAN, shown on the canvas
   const [noFirmware, setNoFirmware] = useState(false)
+  const [_codeFindings, setCodeFindings] = useState(null)
+  const [codeFlagsList, setCodeFlagsList] = useState([])
+  const [declaredComponents, setDeclaredComponents] = useState([])
   const sessionRef = useRef(null)
 
   // Sensor flags change ~10x/sec; wiring faults change only when the layout
@@ -50,16 +46,45 @@ export default function App() {
     () => wiringFlags(layout.wires, layout.components),
     [layout.wires, layout.components])
 
-  const context = () => ({
+  const context = useCallback(() => ({
     device_id: device?.id ?? CTX_DEVICE_ID,
-    components: layout.components.map(c => ({ type: c.type, label: componentDef(c.type)?.label ?? c.type })),
+    components: layout.components.map(c => ({ type: c.type, label: componentDef(c.type)?.label ?? c.type, declared: c.declared, confidence: c.confidence })),
     readings: live,
     anomalies: sensorFlags,
     wiring,
-    // Labels, not layout ids — the model cannot resolve an id to a part.
     disconnected: notReporting(layout.components, live)
       .map((id) => componentDef(layout.components.find(c => c.id === id)?.type)?.label ?? 'unknown'),
-  })
+    codeFlags: formatCodeFlagsForTutor(codeFlagsList),
+  }), [device, layout.components, live, sensorFlags, wiring, codeFlagsList])
+
+  // Merge declared (code-derived) components into layout, preserving manual positions
+  const mergeDeclaredLayout = useCallback((prev, declared) => {
+    let out = { ...prev }
+    for (const c of declared) {
+      const existing = out.components.find(comp => comp.type === c.type && comp.declared)
+      if (!existing) {
+        out = addComponent(out, c.type)
+        // Update the newly added component with declared metadata
+        const newComp = out.components[out.components.length - 1]
+        newComp.declared = true
+        newComp.confidence = c.confidence
+        newComp.i2cAddress = c.i2cAddress
+        newComp.pin = c.pin
+      }
+    }
+    return out
+  }, [])
+
+  // Handle parsed project from CodeTab
+  const onProjectParsed = useCallback((findings, flags) => {
+    setCodeFindings(findings)
+    setCodeFlagsList(flags)
+  }, [])
+
+  const onLayoutGenerated = useCallback((declaredLayout) => {
+    setDeclaredComponents(declaredLayout.components)
+    setLayout(prev => mergeDeclaredLayout(prev, declaredLayout.components))
+  }, [mergeDeclaredLayout])
 
   // SCAN, then read each identifiable address's WHOAMI register so identity
   // comes off the chip rather than off the address. Shared by connect and
@@ -189,6 +214,8 @@ export default function App() {
   useEffect(() => { if (isDemo()) connect() }, []) // demo: skip the Connect click
   useEffect(() => () => { sessionRef.current?.close() }, [])
 
+  const hasDeclared = declaredComponents.length > 0
+
   return (
     <div className="app">
       <header className="navbar">
@@ -205,13 +232,30 @@ export default function App() {
         </div>
       </header>
 
+      {hasDeclared && (
+        <div className="declared-banner">
+          <span>⚠️ Hardware derived from your source code — <strong>confirm it matches your board</strong></span>
+          <button onClick={() => setDeclaredComponents([])}>Dismiss</button>
+        </div>
+      )}
+
       <div className="workspace">
+        {/* LEFT: Code tab - 25% width */}
+        <aside className="code-sidebar-full">
+          <CodeTab 
+            onProjectParsed={onProjectParsed} 
+            onLayoutGenerated={onLayoutGenerated} 
+            registry={{ componentDef, isKnown }}
+          />
+        </aside>
+
+        {/* MIDDLE: Canvas area - 50% width */}
         <main className="charts-area">
           {status === 'needPort' || status === 'error' ? (
             <div className="empty-state">
               <p>No board connected.</p>
               <button className="btn-primary" onClick={connect} disabled={status === 'connecting'}>
-                {supportsSerial() ? 'Connect your ESP32' : 'Web Serial unsupported — use Chrome or Edge'}
+                {supportsSerial() ? 'Connect your microcontroller' : 'Web Serial unsupported — use Chrome or Edge'}
               </button>
               {status === 'error' && (<>
                 <p className="tutor-error">Check the cable and try again.</p>
@@ -225,13 +269,12 @@ export default function App() {
                   <span className="charts-device-name">{device.id}</span>
                   <span className="charts-device-location">{device.board} · fw {device.fw}</span>
                   <button
-                    className="btn-secondary"
-                    style={{ marginLeft: 'auto' }}
+                    className="btn-secondary rescan-btn"
                     onClick={rescan}
                     disabled={status === 'scanning'}
                     title="Re-run the I2C bus sweep to pick up a sensor you just clipped on"
                   >
-                    {status === 'scanning' ? 'Scanning…' : 'Rescan'}
+                    {status === 'scanning' ? 'Scanning…' : '⟳ Rescan'}
                   </button>
                 </div>
               )}
@@ -254,8 +297,11 @@ export default function App() {
           )}
         </main>
 
-        <TutorPanel context={context()} onSubmit={askTutorFlow} replyState={tutor}
-          initialThread={isTutorDemo() ? [{ role: 'user', content: 'Why does the vibration flag keep turning on?' }] : []} />
+        {/* RIGHT: AI Tutor - 25% width */}
+        <aside className="tutor-sidebar-full">
+          <TutorPanel context={context()} onSubmit={askTutorFlow} replyState={tutor}
+            initialThread={isTutorDemo() ? [{ role: 'user', content: 'Why does the vibration flag keep turning on?' }] : []} />
+        </aside>
       </div>
     </div>
   )

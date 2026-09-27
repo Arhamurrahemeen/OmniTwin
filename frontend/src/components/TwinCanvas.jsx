@@ -98,6 +98,11 @@ export default function TwinCanvas({ layout, live = {}, sensorFlags = [], onMove
           >
             ×
           </button>
+          {c.declared && (
+            <span className="sprite-declared-badge" title={`Declared in code (${c.confidence})${c.i2cAddress ? `, I2C 0x${c.i2cAddress.toString(16)}` : ''}${c.pin ? `, GPIO${c.pin}` : ''}`}>
+              D
+            </span>
+          )}
           <ComponentSprite type={c.type} />
           <div style={{ fontSize: 10, fontFamily: 'JetBrains Mono', color: 'var(--ot-ink)', textAlign: 'center' }}>
             {componentDef(c.type)?.label ?? c.type}
