@@ -781,6 +781,21 @@
   border-color: var(--ot-orange);
 }
 
+.canvas-pin-label {
+  position: absolute;
+  top: -3px;
+  z-index: 3;
+  width: max-content;
+  padding: 1px 3px;
+  border: 1px solid #D6D2C7;
+  border-radius: 2px;
+  background: var(--ot-paper);
+  color: var(--ot-ink);
+  font: 8px/1.2 'JetBrains Mono', monospace;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
 .tutor-panel {
   width: 300px;
   padding: 16px;

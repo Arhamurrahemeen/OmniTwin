@@ -31,6 +31,7 @@
 #include "esp_rom_sys.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
 
@@ -43,6 +44,8 @@
    pull-up is enabled too but is too weak to rely on alone. */
 #define DHT_IO        4
 #define DHT_PERIOD_MS 2000
+#define DHT_STARTUP_MS 2000
+#define DHT_STALE_MS  3000
 
 #define SAMPLE_HZ 100
 #define ACC_LSB   4096.0f   /* +-8 g */
@@ -71,6 +74,9 @@ static i2c_master_dev_handle_t mpu;
 static char g_device_id[DEVICE_ID_MAXLEN + 1];
 
 static float g_temp = NAN, g_hum = NAN;  /* last good DHT reading; NAN until first */
+static volatile uint32_t g_dht_last_ok_ms;
+static volatile uint32_t g_dht_last_attempt_ms;
+static SemaphoreHandle_t g_dht_mutex;
 static volatile bool g_stream_on = false;
 static volatile bool g_mpu_ready = false;
 static volatile bool g_mpu_dev_added = false;   /* set once MPU found+configured */
@@ -235,8 +241,6 @@ static bool line_pulled_up(int pin)
 
 /* ---- DHT22 (verbatim from bench firmware) -------------------------------- */
 
-static portMUX_TYPE dht_mux = portMUX_INITIALIZER_UNLOCKED;
-
 static bool dht_decode(const uint8_t b[5], float *temp, float *hum)
 {
     if (((b[0] + b[1] + b[2] + b[3]) & 0xFF) != b[4]) return false;
@@ -244,6 +248,13 @@ static bool dht_decode(const uint8_t b[5], float *temp, float *hum)
     float t = (((b[2] & 0x7F) << 8) | b[3]) * 0.1f;
     *temp = (b[2] & 0x80) ? -t : t;
     return true;
+}
+
+static uint32_t dht_retry_delay_ms(uint32_t now_ms, uint32_t last_attempt_ms)
+{
+    if (!last_attempt_ms) return 0;
+    uint32_t elapsed_ms = now_ms - last_attempt_ms;
+    return elapsed_ms < DHT_PERIOD_MS ? DHT_PERIOD_MS - elapsed_ms : 0;
 }
 
 static int dht_wait(int level, int timeout_us)
@@ -256,6 +267,23 @@ static int dht_wait(int level, int timeout_us)
 
 static bool dht_read(float *temp, float *hum)
 {
+    if (!g_dht_mutex || xSemaphoreTake(g_dht_mutex, pdMS_TO_TICKS(250)) != pdTRUE)
+        return false;
+
+    uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    uint32_t last_attempt_ms = g_dht_last_attempt_ms;
+    if (last_attempt_ms && (uint32_t)(now_ms - last_attempt_ms) < DHT_PERIOD_MS) {
+        uint32_t last_ok_ms = g_dht_last_ok_ms;
+        bool cached = last_ok_ms && (uint32_t)(now_ms - last_ok_ms) < DHT_STALE_MS;
+        if (cached) {
+            *temp = g_temp;
+            *hum = g_hum;
+        }
+        xSemaphoreGive(g_dht_mutex);
+        return cached;
+    }
+    g_dht_last_attempt_ms = now_ms;
+
     uint8_t b[5] = { 0 };
 
     gpio_set_direction(DHT_IO, GPIO_MODE_OUTPUT);
@@ -266,7 +294,6 @@ static bool dht_read(float *temp, float *hum)
     gpio_set_direction(DHT_IO, GPIO_MODE_INPUT);
 
     bool ok = true;
-    taskENTER_CRITICAL(&dht_mux);
     if (dht_wait(0, 90) < 0 || dht_wait(1, 100) < 0 || dht_wait(0, 100) < 0)
         ok = false;
     for (int i = 0; ok && i < 40; i++) {
@@ -275,9 +302,15 @@ static bool dht_read(float *temp, float *hum)
         if (hi < 0) { ok = false; break; }
         b[i >> 3] = (b[i >> 3] << 1) | (hi > 45);
     }
-    taskEXIT_CRITICAL(&dht_mux);
 
-    return ok && dht_decode(b, temp, hum);
+    bool decoded = ok && dht_decode(b, temp, hum);
+    if (decoded) {
+        g_temp = *temp;
+        g_hum = *hum;
+        g_dht_last_ok_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    }
+    xSemaphoreGive(g_dht_mutex);
+    return decoded;
 }
 
 static void dht_selftest(void)
@@ -294,6 +327,9 @@ static void dht_selftest(void)
 
     uint8_t bad[5] = { 0x02, 0x5A, 0x00, 0xFB, 0xFF };
     assert(!dht_decode(bad, &t, &h));
+    assert(dht_retry_delay_ms(3500, 2000) == 500);
+    assert(dht_retry_delay_ms(4000, 2000) == 0);
+    assert(dht_retry_delay_ms(1000, 0) == 0);
 }
 
 static void dht_task(void *arg)
@@ -303,8 +339,6 @@ static void dht_task(void *arg)
     while (1) {
         float t, h;
         if (dht_read(&t, &h)) {
-            g_temp = t;
-            g_hum  = h;
         } else {
             ESP_LOGW(TAG, "DHT read failed (wiring / pull-up on GPIO%d?)", DHT_IO);
         }
@@ -345,10 +379,39 @@ static void reply_whoami(int addr, int reg)
     printf("{\"whoami\":%d}\n", out);
 }
 
-/* One-shot DHT22 read for SCAN — doesn't wait for background task. */
+/* One-shot DHT22 read for SCAN. If a recent background attempt failed, wait
+    out the sensor's minimum sampling interval and retry once. */
 static bool dht_read_once(float *temp, float *hum)
 {
+    uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    uint32_t last_ok_ms = g_dht_last_ok_ms;
+    if (last_ok_ms && (uint32_t)(now_ms - last_ok_ms) < DHT_STALE_MS) {
+        *temp = g_temp;
+        *hum = g_hum;
+        return true;
+    }
+
+    if (now_ms < DHT_STARTUP_MS)
+        vTaskDelay(pdMS_TO_TICKS(DHT_STARTUP_MS - now_ms));
+
+    now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    last_ok_ms = g_dht_last_ok_ms;
+    if (last_ok_ms && (uint32_t)(now_ms - last_ok_ms) < DHT_STALE_MS) {
+        *temp = g_temp;
+        *hum = g_hum;
+        return true;
+    }
+
     gpio_set_pull_mode(DHT_IO, GPIO_PULLUP_ONLY);
+    if (dht_read(temp, hum)) return true;
+
+    if (xSemaphoreTake(g_dht_mutex, pdMS_TO_TICKS(250)) != pdTRUE) return false;
+    now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    uint32_t retry_delay_ms = dht_retry_delay_ms(now_ms, g_dht_last_attempt_ms);
+    xSemaphoreGive(g_dht_mutex);
+
+    if (retry_delay_ms) vTaskDelay(pdMS_TO_TICKS(retry_delay_ms));
+
     return dht_read(temp, hum);
 }
 
@@ -489,7 +552,10 @@ static void stream_task(void *arg)
                nulls ARE the signal — they are how the dashboard learns that a
                part stopped reporting. This is also what proves a bare node is
                alive. */
-            const bool dht_ok = !isnan(g_temp);
+            const uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+            const uint32_t last_dht_ms = g_dht_last_ok_ms;
+            const bool dht_ok = !isnan(g_temp) && last_dht_ms != 0 &&
+                (uint32_t)(now_ms - last_dht_ms) < DHT_STALE_MS;
             if (mpu_ok) {
                 float ax = (int16_t)((d[0] << 8) | d[1]) / ACC_LSB;
                 float ay = (int16_t)((d[2] << 8) | d[3]) / ACC_LSB;
@@ -522,6 +588,8 @@ void app_main(void)
 {
     proto_selftest();
     dht_selftest();
+    g_dht_mutex = xSemaphoreCreateMutex();
+    assert(g_dht_mutex != NULL);
 
     if (nvs_flash_init() != ESP_OK) {
         ESP_ERROR_CHECK(nvs_flash_erase());

@@ -17,8 +17,13 @@ export function isKnown(id) {
   return componentDef(id) !== null
 }
 
-export function pinDef(componentId, pinId) {
-  return componentDef(componentId)?.pins.find(p => p.id === pinId) ?? null
+export function componentPins(component) {
+  if (component && typeof component === 'object' && Array.isArray(component.pins)) return component.pins
+  return componentDef(typeof component === 'string' ? component : component?.type)?.pins ?? []
+}
+
+export function pinDef(component, pinId) {
+  return componentPins(component).find(p => p.id === pinId) ?? null
 }
 
 const hex = (s) => parseInt(s, 16)

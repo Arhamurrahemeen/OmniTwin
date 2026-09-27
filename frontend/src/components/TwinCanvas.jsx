@@ -3,7 +3,7 @@
    Pure presentational: layout is owned by App via serialModel. */
 import { useState } from 'react'
 import ComponentSprite from './ComponentSprite'
-import { allComponents, componentDef, pinDef, pinPos, wiresFor, wireStroke, referenceGhosts, wiringFaults, notReporting } from '../serial/serialModel.mjs'
+import { allComponents, componentDef, componentPins, pinDef, pinPos, wiresFor, wireStroke, referenceGhosts, wiringFaults, notReporting } from '../serial/serialModel.mjs'
 import ADAPTER from '../serial/adapters/twinlab_esp32_v1'
 
 // Pin dot colour by kind — the same convention the wire stroke uses.
@@ -13,6 +13,8 @@ export default function TwinCanvas({ layout, live = {}, sensorFlags = [], onMove
   const [dragging, setDragging] = useState(null)
   const [addType, setAddType] = useState('breadboard')
   const [armed, setArmed] = useState(null)   // { componentId, pinId } awaiting its partner
+  const [wireDragStart, setWireDragStart] = useState(null)
+  const [wireCursor, setWireCursor] = useState(null)
   const [showReference, setShowReference] = useState(false)
 
   // A sensor's values render only on its own sprite, not on every ESP/breadboard
@@ -31,23 +33,49 @@ export default function TwinCanvas({ layout, live = {}, sensorFlags = [], onMove
     setDragging({ id: c.id, dx: e.clientX - c.x, dy: e.clientY - c.y })
   }
   const onPointerMove = (e) => {
-    if (!dragging) return
-    onMove?.(dragging.id, e.clientX - dragging.dx, e.clientY - dragging.dy)
+    if (armed || wireDragStart) {
+      const rect = e.currentTarget.getBoundingClientRect()
+      setWireCursor({ x: e.clientX - rect.left, y: e.clientY - rect.top })
+    }
+    if (dragging) onMove?.(dragging.id, e.clientX - dragging.dx, e.clientY - dragging.dy)
   }
-  const onPointerUp = () => setDragging(null)
+  const onPinPointerDown = (c, p) => (e) => {
+    e.stopPropagation()
+    setWireDragStart({ componentId: c.id, pinId: p.id })
+    setWireCursor(pinPos(c, p.id))
+  }
+  const onPointerUp = (e) => {
+    setDragging(null)
+    if (wireDragStart) {
+      const target = e.target.closest?.('[data-component-id][data-pin-id]')
+      const toComponentId = target?.dataset.componentId
+      const toPinId = target?.dataset.pinId
+      if (toComponentId && toPinId && toComponentId !== wireDragStart.componentId)
+        onWire?.(wireDragStart.componentId, wireDragStart.pinId, toComponentId, toPinId)
+      setWireDragStart(null)
+      setWireCursor(null)
+    }
+  }
 
   // Click a pin to arm it, click a second pin to wire them. Clicking a pin that
   // already has a wire detaches it instead — no modifier keys, no delete mode.
-  const onPinDown = (c, p) => (e) => {
+  const onPinClick = (c, p) => (e) => {
     e.stopPropagation()
     const existing = wiresFor(layout, c.id, p.id)
-    if (existing.length) { onUnwire?.(existing[0].id); setArmed(null); return }
+    if (existing.length) { onUnwire?.(existing[0].id); setArmed(null); setWireCursor(null); return }
     if (armed && armed.componentId !== c.id) {
       onWire?.(armed.componentId, armed.pinId, c.id, p.id)
       setArmed(null)
+      setWireCursor(null)
+      return
+    }
+    if (armed?.componentId === c.id && armed?.pinId === p.id) {
+      setArmed(null)
+      setWireCursor(null)
       return
     }
     setArmed({ componentId: c.id, pinId: p.id })
+    setWireCursor(pinPos(c, p.id))
   }
   // Clicking empty canvas cancels a half-drawn wire.
   const onCanvasDown = (e) => { if (e.target === e.currentTarget) setArmed(null) }
@@ -103,7 +131,7 @@ export default function TwinCanvas({ layout, live = {}, sensorFlags = [], onMove
               D
             </span>
           )}
-          <ComponentSprite type={c.type} />
+          <ComponentSprite type={c.type} pins={componentPins(c)} />
           <div style={{ fontSize: 10, fontFamily: 'JetBrains Mono', color: 'var(--ot-ink)', textAlign: 'center' }}>
             {componentDef(c.type)?.label ?? c.type}
           </div>
@@ -122,16 +150,21 @@ export default function TwinCanvas({ layout, live = {}, sensorFlags = [], onMove
 
       {/* Pin dots. These sit outside the draggable sprite divs so a pin press
           never starts a component drag. */}
-      {layout.components.flatMap(c => (componentDef(c.type)?.pins ?? []).map(p => {
+      {layout.components.flatMap(c => componentPins(c).map(p => {
         const at = pinPos(c, p.id)
         const isArmed = armed?.componentId === c.id && armed?.pinId === p.id
         const wired = wiresFor(layout, c.id, p.id).length > 0
+        const size = componentDef(c.type)?.size
+        const labelOnLeft = p.dx > (size?.w ?? 0) / 2
         return (
           <div
             key={`${c.id}.${p.id}`}
             data-pin={`${c.type}.${p.id}`}
+            data-component-id={c.id}
+            data-pin-id={p.id}
             title={`${p.label} (${p.kind})`}
-            onPointerDown={onPinDown(c, p)}
+            onPointerDown={onPinPointerDown(c, p)}
+            onClick={onPinClick(c, p)}
             style={{
               position: 'absolute', left: at.x - 5, top: at.y - 5, width: 10, height: 10,
               borderRadius: '50%', cursor: 'crosshair', zIndex: 2,
@@ -139,7 +172,14 @@ export default function TwinCanvas({ layout, live = {}, sensorFlags = [], onMove
               boxShadow: isArmed ? '0 0 0 3px var(--ot-orange)' : (wired ? '0 0 0 2px var(--ot-paper)' : 'none'),
               outline: '1px solid var(--ot-ink)',
             }}
-          />
+          >
+            <span
+              className="canvas-pin-label"
+              style={{ left: labelOnLeft ? -5 : 9, transform: labelOnLeft ? 'translateX(-100%)' : undefined }}
+            >
+              {p.label}
+            </span>
+          </div>
         )
       }))}
 
@@ -154,22 +194,39 @@ export default function TwinCanvas({ layout, live = {}, sensorFlags = [], onMove
 
       {layout.wires.map(w => {
         const fc = compById(w.fromComponentId), tc = compById(w.toComponentId)
-        const fromPin = pinDef(fc?.type, w.fromPinId), toPin = pinDef(tc?.type, w.toPinId)
+        const fromPin = pinDef(fc, w.fromPinId), toPin = pinDef(tc, w.toPinId)
         // A wire whose part or pin is gone is skipped, not drawn to (0,0). The
         // wire itself is still real, so an unknown kind falls back to signal.
         if (!fc || !tc || !fromPin || !toPin) return null
         const from = pinPos(fc, w.fromPinId)
         const to = pinPos(tc, w.toPinId)
         const s = wireStroke(fromPin.kind)
+        const bendX = Math.round((from.x + to.x) / 2)
         return (
           <svg key={w.id} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} width="100%" height="100%">
-            <line
-              x1={from.x} y1={from.y} x2={to.x} y2={to.y}
-              stroke={s.stroke} strokeWidth="3" strokeDasharray={s.dash ?? undefined}
+            <polyline
+              points={`${from.x},${from.y} ${bendX},${from.y} ${bendX},${to.y} ${to.x},${to.y}`}
+              fill="none" stroke={s.stroke} strokeWidth="3"
+              strokeDasharray={s.dash ?? undefined} strokeLinejoin="round" strokeLinecap="round"
             />
           </svg>
         )
       })}
+
+      {(wireDragStart || armed) && wireCursor && (() => {
+        const start = wireDragStart ?? armed
+        const from = pinPos(compById(start.componentId), start.pinId)
+        const bendX = Math.round((from.x + wireCursor.x) / 2)
+        return (
+          <svg style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} width="100%" height="100%">
+            <polyline
+              points={`${from.x},${from.y} ${bendX},${from.y} ${bendX},${wireCursor.y} ${wireCursor.x},${wireCursor.y}`}
+              fill="none" stroke="var(--ot-green)" strokeWidth="3" strokeDasharray="5 4"
+              strokeLinejoin="round" strokeLinecap="round" opacity="0.65"
+            />
+          </svg>
+        )
+      })()}
 
       <select
         value={addType}

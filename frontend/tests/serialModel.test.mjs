@@ -2,7 +2,7 @@ import test from 'node:test'
 import assert from 'node:assert'
 import {
   readLine, parseScan, scanToComponents, defaultLayout,
-  addComponent, removeComponent, moveComponent, addWire, removeWire, pinPos, wiresFor,
+  addComponent, removeComponent, moveComponent, addWire, removeWire, pinDef, pinPos, wiresFor, mergeDeclaredLayout,
   wiringFlags, wiringFaults, wireStroke, referenceGhosts,
   anomalyFlags, notReporting, partFaults, withTimeout, scanNotice,
 } from '../src/serial/serialModel.mjs'
@@ -160,6 +160,36 @@ test('addWire rejects an unknown pin and a self-wire', () => {
   const [esp, mpu] = l.components
   assert.throws(() => addWire(l, esp.id, 'NOPE', mpu.id, 'SDA'), /Unknown pin/)
   assert.throws(() => addWire(l, esp.id, 'SDA', esp.id, 'GND'), /same component/)
+})
+
+test('declared layout merges alternate GPIO pins and source wires without losing manual wiring', () => {
+  const base = defaultLayout([{ type: 'esp32' }, { type: 'breadboard' }, { type: 'mpu6050' }])
+  const [esp, board, mpu] = base.components
+  const manual = addWire(base, board.id, 'GND', mpu.id, 'GND')
+  const espPins = [
+    { id: 'SDA', label: 'SDA (GPIO13)', kind: 'signal', dx: 60, dy: 6, gpio: 13 },
+  ]
+  const declared = {
+    components: [
+      { id: 'source-esp', type: 'esp32', declared: true, confidence: 'strong', pins: espPins },
+      { id: 'source-mpu', type: 'mpu6050', declared: true, confidence: 'strong' },
+    ],
+    wires: [{ id: 'source-wire', fromComponentId: 'source-esp', fromPinId: 'SDA', toComponentId: 'source-mpu', toPinId: 'SDA', declared: true }],
+  }
+
+  const merged = mergeDeclaredLayout(manual, declared)
+  const mergedEsp = merged.components.find(c => c.type === 'esp32')
+  assert.equal(mergedEsp.id, esp.id)
+  assert.equal(pinDef(mergedEsp, 'SDA').gpio, 13)
+  assert.equal(merged.wires.length, 2)
+  assert.ok(merged.wires.some(w => w.fromComponentId === board.id && w.fromPinId === 'GND'))
+  assert.ok(merged.wires.some(w => w.fromComponentId === esp.id && w.fromPinId === 'SDA'))
+
+  const refreshed = mergeDeclaredLayout(merged, {
+    ...declared,
+    wires: [],
+  })
+  assert.equal(refreshed.wires.length, 1, 're-parsing must replace only the derived wire')
 })
 
 test('pinPos offsets by the registry pin dx/dy, and is 0,0 when the pin is unknown', () => {

@@ -18,6 +18,12 @@ test('every component has a label, size, defaultPos, and at least one pin', () =
   }
 })
 
+test('canvas pin choices match the authored ESP32, breadboard, and MPU terminals', () => {
+  assert.equal(componentDef('esp32').pins.length, 5)
+  assert.equal(componentDef('breadboard').pins.length, 2)
+  assert.equal(componentDef('mpu6050').pins.length, 4)
+})
+
 test('pin ids are unique within a component and kinds are legal', () => {
   for (const c of allComponents()) {
     const ids = c.pins.map(p => p.id)

@@ -32,8 +32,43 @@ _TUTOR_SYSTEM = (
     "to change before discussing anything else. If any components are listed as NOT "
     "REPORTING, say so plainly too — that part has gone quiet, which is a wiring or "
     "power problem rather than a reading to interpret. Sensor anomaly flags are only "
-    "threshold excursions and may well be a downstream effect of a wiring fault."
+    "threshold excursions and may well be a downstream effect of a wiring fault. "
+    "When source-derived hardware is provided, cite its exact GPIO assignments, "
+    "but say that the student's source declares them; never claim they verify the "
+    "physical wiring."
 )
+
+
+def _source_hardware_summary(source_hardware: dict | None) -> str:
+    if not isinstance(source_hardware, dict):
+        return "none"
+
+    details = []
+    i2c = source_hardware.get("i2c")
+    if isinstance(i2c, dict):
+        sda, scl = i2c.get("sda"), i2c.get("scl")
+        if sda is not None and scl is not None:
+            details.append(f"I2C SDA GPIO{sda}, SCL GPIO{scl}")
+
+    addresses = source_hardware.get("addresses", [])
+    if addresses:
+        formatted = [f"0x{addr:02X}" if isinstance(addr, int) else str(addr) for addr in addresses]
+        details.append(f"I2C addresses {', '.join(formatted)}")
+
+    for sensor in source_hardware.get("sensors", []):
+        if not isinstance(sensor, dict):
+            continue
+        sensor_type = sensor.get("type", "sensor")
+        pin = sensor.get("pin")
+        details.append(f"{sensor_type} on GPIO{pin}" if pin is not None else str(sensor_type))
+
+    for pin in source_hardware.get("pins", []):
+        if not isinstance(pin, dict):
+            continue
+        label = pin.get("label") or f"GPIO{pin.get('pin')}"
+        details.append(f"{label} (GPIO{pin['pin']})" if pin.get("pin") is not None else str(label))
+
+    return "; ".join(details) or "no specific pin assignments parsed"
 
 
 def build_prompt(context: dict, messages: list[dict]) -> list[dict]:
@@ -49,6 +84,9 @@ def build_prompt(context: dict, messages: list[dict]) -> list[dict]:
         f"{context.get('disconnected', []) or 'none'}\n"
         f"- Wiring faults (a pin of one kind wired to a pin of another — the "
         f"student's connections, not a sensor reading): {context.get('wiring', []) or 'none'}\n"
+        f"- Source-derived hardware (declared by code, not physically verified): "
+        f"{_source_hardware_summary(context.get('sourceHardware'))}\n"
+        f"- Static source-code findings: {context.get('codeFlags', []) or 'none'}\n"
     )
     convo = [{"role": "system", "content": _TUTOR_SYSTEM},
              {"role": "system", "content": context_block}]

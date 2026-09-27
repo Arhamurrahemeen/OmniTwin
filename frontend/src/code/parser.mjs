@@ -4,20 +4,22 @@
 // Regex patterns for common Arduino/C constructs
 const PATTERNS = {
   // Wire.begin(sda, scl) — I2C pins
-  i2cBegin: /Wire\.begin\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)/g,
+  i2cBegin: /Wire\.begin\s*\(\s*([\w]+)\s*,\s*([\w]+)\s*\)/g,
   // Wire.begin() — default pins (board-specific)
   i2cBeginDefault: /Wire\.begin\s*\(\s*\)/g,
   // I2C address usage: Wire.beginTransmission(0x68), Wire.requestFrom(0x68, ...)
-  i2cAddr: /Wire\.(?:beginTransmission|requestFrom)\s*\(\s*(0x[0-9a-fA-F]+|\d+)/g,
+  i2cAddr: /Wire\.(?:beginTransmission|requestFrom)\s*\(\s*(0x[0-9a-fA-F]+|[\w]+)/g,
+  idfI2cPin: /\.(sda_io_num|scl_io_num)\s*=\s*([\w]+)/g,
+  idfI2cProbe: /i2c_master_probe\s*\(\s*[^,]+,\s*(0x[0-9a-fA-F]+|[\w]+)\s*,/g,
   // DHT dht(pin, type) or dht.begin(pin)
-  dhtConstruct: /DHT\s+\w+\s*\(\s*(\d+)\s*,\s*(DHT\d+)\s*\)/g,
+  dhtConstruct: /DHT\s+\w+\s*\(\s*([\w]+)\s*,\s*(DHT\d+)\s*\)/g,
   dhtBegin: /\.begin\s*\(\s*(\d+)\s*\)/g,
   // pinMode(pin, MODE)
   pinMode: /pinMode\s*\(\s*(\d+)\s*,\s*(INPUT|OUTPUT|INPUT_PULLUP|OUTPUT_OPEN_DRAIN)\s*\)/g,
   // #define NAME value
-  define: /#define\s+(\w+)\s+(\d+)/g,
+  define: /#define\s+(\w+)\s+(0[xX][\da-fA-F]+|\d+)/g,
   // const int NAME = value;
-  constInt: /const\s+int\s+(\w+)\s*=\s*(\d+)/g,
+  constInt: /const\s+int\s+(\w+)\s*=\s*(0[xX][\da-fA-F]+|\d+)/g,
   // Serial.begin(baud)
   serialBegin: /Serial\.begin\s*\(\s*(\d+)\s*\)/g,
   // Serial.print/println with sensor readings
@@ -68,17 +70,27 @@ function parseSource(source, filename = '') {
   // #define and const int — resolve symbolic names
   let match
   while ((match = PATTERNS.define.exec(source))) {
-    findings.defines.set(match[1], parseInt(match[2], 10))
+    findings.defines.set(match[1], Number(match[2]))
   }
   while ((match = PATTERNS.constInt.exec(source))) {
-    findings.defines.set(match[1], parseInt(match[2], 10))
+    findings.defines.set(match[1], Number(match[2]))
   }
 
   function resolveValue(val) {
     if (typeof val === 'number') return val
-    const num = parseInt(val, 10)
-    if (!isNaN(num)) return num
+    const num = Number(val)
+    if (!Number.isNaN(num)) return num
     return findings.defines.get(val) ?? null
+  }
+
+  // Library includes are available before sensor-specific call parsing.
+  while ((match = PATTERNS.include.exec(source))) {
+    const lib = match[1]
+    if (LIBRARY_HINTS[lib]) {
+      findings.libraries.push({ name: lib, ...LIBRARY_HINTS[lib] })
+    } else {
+      findings.libraries.push({ name: lib, note: 'Library included' })
+    }
   }
 
   // Wire.begin(sda, scl) — STRONG evidence
@@ -93,6 +105,19 @@ function parseSource(source, filename = '') {
     }
   }
 
+  // ESP-IDF configures I2C pins in i2c_master_bus_config_t rather than Wire.begin.
+  const idfPins = {}
+  while ((match = PATTERNS.idfI2cPin.exec(source))) {
+    const pin = resolveValue(match[2])
+    if (pin !== null) idfPins[match[1] === 'sda_io_num' ? 'sda' : 'scl'] = pin
+  }
+  if (idfPins.sda !== undefined && idfPins.scl !== undefined && !findings.i2c.pins) {
+    findings.i2c.pins = idfPins
+    findings.i2c.confidence = 'strong'
+    findings.pins.set(idfPins.sda, { mode: 'signal', label: 'SDA', confidence: 'strong' })
+    findings.pins.set(idfPins.scl, { mode: 'signal', label: 'SCL', confidence: 'strong' })
+  }
+
   // Wire.begin() — default pins, WEAK
   if (PATTERNS.i2cBeginDefault.test(source) && !findings.i2c.pins) {
     findings.i2c.confidence = 'weak'
@@ -101,10 +126,12 @@ function parseSource(source, filename = '') {
 
   // I2C addresses used
   while ((match = PATTERNS.i2cAddr.exec(source))) {
-    const addr = parseInt(match[1], match[1].startsWith('0x') ? 16 : 10)
-    if (!findings.i2c.addresses.includes(addr)) {
-      findings.i2c.addresses.push(addr)
-    }
+    const addr = resolveValue(match[1])
+    if (addr !== null && !findings.i2c.addresses.includes(addr)) findings.i2c.addresses.push(addr)
+  }
+  while ((match = PATTERNS.idfI2cProbe.exec(source))) {
+    const addr = resolveValue(match[1])
+    if (addr !== null && !findings.i2c.addresses.includes(addr)) findings.i2c.addresses.push(addr)
   }
 
   // DHT construction — STRONG
@@ -112,7 +139,7 @@ function parseSource(source, filename = '') {
     const pin = resolveValue(match[1])
     const type = match[2].toLowerCase()
     if (pin !== null) {
-      findings.sensors.push({ type: 'dht', variant: type, pin, confidence: 'strong' })
+      findings.sensors.push({ type, variant: type, pin, confidence: 'strong' })
       findings.pins.set(pin, { mode: 'signal', label: 'DATA', confidence: 'strong' })
     }
   }
@@ -129,6 +156,17 @@ function parseSource(source, filename = '') {
     }
   }
 
+  // The bundled ESP-IDF firmware bit-bangs a DHT22 and exposes its GPIO as a
+  // named macro instead of constructing an Arduino DHT object.
+  const dhtPinName = [...findings.defines.keys()].find(name => /^DHT_(?:IO|PIN)$/.test(name))
+  if (dhtPinName && /\bDHT22\b/i.test(source) && /\bdht_(?:read|decode)\s*\(/.test(source)) {
+    const pin = findings.defines.get(dhtPinName)
+    if (!findings.sensors.some(s => s.type === 'dht22' && s.pin === pin)) {
+      findings.sensors.push({ type: 'dht22', pin, confidence: 'strong' })
+      findings.pins.set(pin, { mode: 'signal', label: 'DATA', confidence: 'strong' })
+    }
+  }
+
   // pinMode — STRONG for explicit pins
   while ((match = PATTERNS.pinMode.exec(source))) {
     const pin = resolveValue(match[1])
@@ -136,16 +174,6 @@ function parseSource(source, filename = '') {
     if (pin !== null) {
       const kind = mode === 'OUTPUT' ? 'signal' : mode.includes('INPUT') ? 'signal' : 'signal'
       findings.pins.set(pin, { mode: kind, label: `GPIO${pin}`, confidence: 'strong' })
-    }
-  }
-
-  // Library includes
-  while ((match = PATTERNS.include.exec(source))) {
-    const lib = match[1]
-    if (LIBRARY_HINTS[lib]) {
-      findings.libraries.push({ name: lib, ...LIBRARY_HINTS[lib] })
-    } else {
-      findings.libraries.push({ name: lib, note: 'Library included' })
     }
   }
 
@@ -266,54 +294,56 @@ export function parseProject(files) {
 export function findingsToLayout(findings, registry) {
   // registry: from components.json via registry.mjs
   const components = []
+  const wires = []
   let x = 90, y = 90
   const spacing = 120
+  let mcu = null
 
   // Always include MCU if we have any pin info
-  if (findings.pins.length > 0 || findings.i2c.pins || findings.libraries.length > 0) {
+  if (findings.pins.length > 0 || findings.i2c.pins || findings.i2c.addresses.length > 0 || findings.libraries.length > 0) {
     const mcuDef = registry.componentDef('esp32') // default to ESP32 shape
     if (mcuDef) {
-      components.push({
+      mcu = {
         id: `mcu-${Date.now()}`,
         type: 'esp32',
         label: mcuDef.label,
         x: 120, y: 300,
         declared: true,
         confidence: findings.confidence,
-      })
+        pins: mcuDef.pins.map(pin => ({ ...pin })),
+      }
+      components.push(mcu)
     }
   }
 
   // I2C sensors from addresses + libraries
-  const i2cSensorMap = {
-    0x68: { type: 'mpu6050', label: 'MPU6050' },
-    0x69: { type: 'mpu6050', label: 'MPU6050 (alt)' },
-    0x76: { type: 'bmp280', label: 'BMP280' },
-    0x77: { type: 'bmp280', label: 'BMP280 (alt)' },
-    0x3C: { type: 'ssd1306', label: 'SSD1306 OLED' },
-    0x3D: { type: 'ssd1306', label: 'SSD1306 OLED (alt)' },
-  }
-
+  const placedI2cTypes = new Set()
+  const i2cByAddress = new Map()
   for (const addr of findings.i2c.addresses) {
-    const sensor = i2cSensorMap[addr]
-    if (sensor && registry.isKnown(sensor.type)) {
-      components.push({
+    const sensor = registry.allComponents().find(c => c.candidateAddrs?.includes(addr))
+    if (!sensor || !registry.isKnown(sensor.id)) continue
+    let placed = components.find(c => c.type === sensor.id)
+    if (!placed && !placedI2cTypes.has(sensor.id)) {
+      placedI2cTypes.add(sensor.id)
+      placed = {
         id: `i2c-${addr}-${Date.now()}`,
-        type: sensor.type,
+        type: sensor.id,
         label: sensor.label,
         x, y,
         declared: true,
         confidence: findings.i2c.confidence,
         i2cAddress: addr,
-      })
+      }
+      components.push(placed)
       x += spacing
     }
+    if (placed) i2cByAddress.set(addr, placed)
   }
 
   // Explicit sensors from code (DHT, 1Wire, Servo)
   for (const s of findings.sensors) {
     if (registry.isKnown(s.type)) {
-      components.push({
+      const placed = {
         id: `${s.type}-${s.pin}-${Date.now()}`,
         type: s.type,
         label: registry.componentDef(s.type).label,
@@ -321,9 +351,67 @@ export function findingsToLayout(findings, registry) {
         declared: true,
         confidence: s.confidence,
         pin: s.pin,
-      })
+      }
+      components.push(placed)
       x += spacing
     }
+  }
+
+  if (mcu) {
+    const setRolePin = (id, gpio) => {
+      if (!Number.isInteger(gpio)) return
+      const pin = mcu.pins.find(p => p.id === id)
+      if (pin) {
+        pin.gpio = gpio
+        pin.label = `${id} (GPIO${gpio})`
+      }
+    }
+    setRolePin('SDA', findings.i2c.pins?.sda)
+    setRolePin('SCL', findings.i2c.pins?.scl)
+
+    const dht = components.find(c => c.type === 'dht22')
+    if (dht && Number.isInteger(dht.pin)) setRolePin('DHT', dht.pin)
+
+    const rolePins = new Set([
+      findings.i2c.pins?.sda,
+      findings.i2c.pins?.scl,
+      dht?.pin,
+    ])
+    let extraIndex = 0
+    for (const declaredPin of findings.pins) {
+      if (!Number.isInteger(declaredPin.pin) || rolePins.has(declaredPin.pin)) continue
+      if (mcu.pins.some(pin => pin.gpio === declaredPin.pin)) continue
+      const side = Math.floor(extraIndex / 8)
+      const slot = extraIndex % 8
+      mcu.pins.push({
+        id: `GPIO${declaredPin.pin}`,
+        label: `GPIO${declaredPin.pin}`,
+        kind: 'signal',
+        dx: 10 + slot * 14,
+        dy: side % 2 === 0 ? 6 : 84,
+        gpio: declaredPin.pin,
+      })
+      extraIndex += 1
+    }
+
+    let wireIndex = 0
+    const connect = (fromComponent, fromPinId, toComponent, toPinId) => {
+      if (!fromComponent || !toComponent) return
+      wires.push({
+        id: `declared-wire-${wireIndex++}`,
+        fromComponentId: fromComponent.id,
+        fromPinId,
+        toComponentId: toComponent.id,
+        toPinId,
+        declared: true,
+      })
+    }
+    const mpu = [...i2cByAddress.values()].find(c => c.type === 'mpu6050')
+    if (mpu && Number.isInteger(findings.i2c.pins?.sda) && Number.isInteger(findings.i2c.pins?.scl)) {
+      connect(mcu, 'SDA', mpu, 'SDA')
+      connect(mcu, 'SCL', mpu, 'SCL')
+    }
+    if (dht && Number.isInteger(dht.pin)) connect(mcu, 'DHT', dht, 'DATA')
   }
 
   // Breadboard always available for wiring
@@ -338,5 +426,5 @@ export function findingsToLayout(findings, registry) {
     })
   }
 
-  return { components, wires: [] }
+  return { components, wires }
 }

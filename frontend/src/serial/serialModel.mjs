@@ -2,10 +2,10 @@
 // Component identity, geometry, and pins come from the data-driven registry
 // (src/registry/components.json), not from tables in this file.
 
-import { REGISTRY, allComponents, componentDef, isKnown, pinDef, resolveScanEntry, whoamiRequests } from '../registry/registry.mjs'
+import { REGISTRY, allComponents, componentDef, componentPins, isKnown, pinDef, resolveScanEntry, whoamiRequests } from '../registry/registry.mjs'
 
 // Re-exported so UI modules have one import site for registry data.
-export { allComponents, componentDef, isKnown, pinDef, whoamiRequests }
+export { allComponents, componentDef, componentPins, isKnown, pinDef, whoamiRequests }
 
 // Ranges key on the WIRE key the adapter emits — `hum`, not `humidity`. The old
 // `humidity` key never matched a reading, so the 20-90% check was dead code
@@ -104,7 +104,7 @@ export function moveComponent(layout, id, x, y) {
 // for correctness and rendered from the pin's offset in the registry.
 export function addWire(layout, fromComponentId, fromPinId, toComponentId, toPinId) {
   for (const [cid, pid] of [[fromComponentId, fromPinId], [toComponentId, toPinId]]) {
-    if (!pinDef(layout.components.find(c => c.id === cid)?.type, pid))
+    if (!pinDef(layout.components.find(c => c.id === cid), pid))
       throw new Error(`Unknown pin: ${cid}.${pid}`)
   }
   if (fromComponentId === toComponentId)
@@ -142,11 +142,57 @@ export function mergeLayout(prev, comps) {
   return out
 }
 
+// Merge the code-derived projection without losing hand-placed positions or
+// manual wires. Declared wires are regenerated when the source is re-parsed.
+export function mergeDeclaredLayout(prev, declaredLayout) {
+  const components = [...prev.components]
+  const wires = prev.wires.filter(w => !w.declared)
+  const componentIds = new Map()
+
+  for (const declared of declaredLayout.components) {
+    const existingIndex = components.findIndex(c => c.type === declared.type)
+    let target
+    if (existingIndex >= 0) {
+      const existing = components[existingIndex]
+      target = {
+        ...existing,
+        declared: declared.declared || existing.declared,
+        confidence: declared.declared ? declared.confidence : existing.confidence,
+        pins: declared.pins ?? existing.pins,
+        i2cAddress: declared.i2cAddress ?? existing.i2cAddress,
+        pin: declared.pin ?? existing.pin,
+      }
+      components[existingIndex] = target
+    } else {
+      const position = componentDef(declared.type)?.defaultPos ?? fallbackPos(components.length)
+      target = { ...declared, id: nid(), x: position.x, y: position.y }
+      components.push(target)
+    }
+    componentIds.set(declared.id, target.id)
+  }
+
+  for (const wire of declaredLayout.wires) {
+    const fromComponentId = componentIds.get(wire.fromComponentId)
+    const toComponentId = componentIds.get(wire.toComponentId)
+    if (!fromComponentId || !toComponentId) continue
+    const alreadyPresent = wires.some(w =>
+      w.fromComponentId === fromComponentId && w.fromPinId === wire.fromPinId &&
+      w.toComponentId === toComponentId && w.toPinId === wire.toPinId)
+    if (alreadyPresent) continue
+    const from = components.find(c => c.id === fromComponentId)
+    const to = components.find(c => c.id === toComponentId)
+    if (!pinDef(from, wire.fromPinId) || !pinDef(to, wire.toPinId)) continue
+    wires.push({ ...wire, id: nid(), fromComponentId, toComponentId, declared: true })
+  }
+
+  return { ...prev, components, wires }
+}
+
 // Screen position of a pin: the component's x/y plus the pin's registry offset.
 // Falls back to {0,0} when the component or pin is unknown, which is also the
 // signal callers use to skip an unresolvable wire.
 export function pinPos(component, pinId) {
-  const pin = pinDef(component?.type, pinId)
+  const pin = pinDef(component, pinId)
   return pin ? { x: component.x + pin.dx, y: component.y + pin.dy } : { x: 0, y: 0 }
 }
 
@@ -178,7 +224,7 @@ export function wiringFaults(wires, components) {
   const byId = new Map(components.map(c => [c.id, c]))
   const end = (cid, pid) => {
     const comp = byId.get(cid)
-    const pin = pinDef(comp?.type, pid)
+    const pin = pinDef(comp, pid)
     return pin ? { id: cid, label: componentDef(comp.type).label, pin } : null
   }
   const faults = []

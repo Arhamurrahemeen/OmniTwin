@@ -7,8 +7,8 @@ import { supportsSerial, requestPort, SerialSession } from './serial/serialBridg
 import { DemoSession } from './serial/demoSession.mjs'
 import ADAPTER from './serial/adapters/twinlab_esp32_v1'
 import {
-  defaultLayout, parseScan, detectAdapter, detectComponents, scanNotice,
-  addComponent, removeComponent, moveComponent, addWire, removeWire, anomalyFlags, partFaults, wiringFlags, componentDef, notReporting, mergeLayout, isKnown,
+  defaultLayout, parseScan, detectAdapter, detectComponents, scanNotice, allComponents,
+  addComponent, removeComponent, moveComponent, addWire, removeWire, anomalyFlags, partFaults, wiringFlags, componentDef, notReporting, mergeLayout, mergeDeclaredLayout, isKnown,
 } from './serial/serialModel.mjs'
 import { askTutor } from './api'
 import { formatCodeFlagsForTutor } from './code/codeFlags'
@@ -22,7 +22,7 @@ const CTX_DEVICE_ID = 'local'
 // it — so the effect re-ran, called back into App state, re-rendered App, and
 // looped forever once a project folder was loaded. Module scope gives it one
 // identity for the app's lifetime.
-const REGISTRY_API = { componentDef, isKnown }
+const REGISTRY_API = { componentDef, isKnown, allComponents }
 
 // The adapter whose IDENT answered. Module-level rather than state: onData fires
 // ~10x/sec and must not re-render the tree to reach it.
@@ -41,7 +41,7 @@ export default function App() {
   const [tutor, setTutor] = useState(null)     // { messages, reply, error, sessionId }
   const [scanInfo, setScanInfo] = useState(null) // result of the last SCAN, shown on the canvas
   const [noFirmware, setNoFirmware] = useState(false)
-  const [_codeFindings, setCodeFindings] = useState(null)
+  const [codeFindings, setCodeFindings] = useState(null)
   const [codeFlagsList, setCodeFlagsList] = useState([])
   const [declaredComponents, setDeclaredComponents] = useState([])
   const sessionRef = useRef(null)
@@ -62,25 +62,14 @@ export default function App() {
     disconnected: notReporting(layout.components, live)
       .map((id) => componentDef(layout.components.find(c => c.id === id)?.type)?.label ?? 'unknown'),
     codeFlags: formatCodeFlagsForTutor(codeFlagsList),
-  }), [device, layout.components, live, sensorFlags, wiring, codeFlagsList])
-
-  // Merge declared (code-derived) components into layout, preserving manual positions
-  const mergeDeclaredLayout = useCallback((prev, declared) => {
-    let out = { ...prev }
-    for (const c of declared) {
-      const existing = out.components.find(comp => comp.type === c.type && comp.declared)
-      if (!existing) {
-        out = addComponent(out, c.type)
-        // Update the newly added component with declared metadata
-        const newComp = out.components[out.components.length - 1]
-        newComp.declared = true
-        newComp.confidence = c.confidence
-        newComp.i2cAddress = c.i2cAddress
-        newComp.pin = c.pin
-      }
-    }
-    return out
-  }, [])
+    sourceHardware: codeFindings ? {
+      confidence: codeFindings.confidence,
+      i2c: codeFindings.i2c.pins,
+      addresses: codeFindings.i2c.addresses,
+      sensors: codeFindings.sensors.map(({ type, pin, confidence }) => ({ type, pin, confidence })),
+      pins: codeFindings.pins.map(({ pin, label, confidence }) => ({ pin, label, confidence })),
+    } : null,
+  }), [device, layout.components, live, sensorFlags, wiring, codeFlagsList, codeFindings])
 
   // Handle parsed project from CodeTab
   const onProjectParsed = useCallback((findings, flags) => {
@@ -89,9 +78,9 @@ export default function App() {
   }, [])
 
   const onLayoutGenerated = useCallback((declaredLayout) => {
-    setDeclaredComponents(declaredLayout.components)
-    setLayout(prev => mergeDeclaredLayout(prev, declaredLayout.components))
-  }, [mergeDeclaredLayout])
+    setDeclaredComponents(declaredLayout.components.filter(c => c.declared))
+    setLayout(prev => mergeDeclaredLayout(prev, declaredLayout))
+  }, [])
 
   // SCAN, then read each identifiable address's WHOAMI register so identity
   // comes off the chip rather than off the address. Shared by connect and

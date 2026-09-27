@@ -42,6 +42,23 @@ def test_build_prompt_handles_absent_wiring_key():
     assert "temperature above 40 C" in block
 
 
+def test_build_prompt_grounds_tutor_in_declared_firmware_pins():
+    ctx = dict(_ctx())
+    ctx["sourceHardware"] = {
+        "i2c": {"sda": 21, "scl": 22},
+        "addresses": [104],
+        "sensors": [{"type": "dht22", "pin": 4, "confidence": "strong"}],
+        "pins": [],
+    }
+    prompt = llm.build_prompt(ctx, [{"role": "user", "content": "Which pins?"}])
+    block = prompt[1]["content"]
+    assert "declared by code, not physically verified" in block
+    assert "SDA GPIO21, SCL GPIO22" in block
+    assert "0x68" in block
+    assert "dht22 on GPIO4" in block
+    assert "physical wiring" in prompt[0]["content"]
+
+
 def test_system_prompt_tells_tutor_to_lead_with_wiring_faults():
     # Verified against the live model: with only the data line labelling the
     # faults, the tutor discussed the vibration anomaly and never mentioned the
