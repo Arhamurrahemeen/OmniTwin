@@ -7,9 +7,12 @@ import { REGISTRY, allComponents, componentDef, isKnown, pinDef, resolveScanEntr
 // Re-exported so UI modules have one import site for registry data.
 export { allComponents, componentDef, isKnown, pinDef, whoamiRequests }
 
-const SENSOR_RANGES = { temp: { max: 40 }, humidity: { min: 20, max: 90 }, vib: { max: 0.2 } }
+// Ranges key on the WIRE key the adapter emits — `hum`, not `humidity`. The old
+// `humidity` key never matched a reading, so the 20-90% check was dead code
+// shaped like a working feature.
+const SENSOR_RANGES = { temp: { max: 40 }, hum: { min: 20, max: 90 }, vib: { max: 0.2 } }
 // Display labels for anomaly messages (readings keys are short wire names).
-const LABELS = { temp: 'temperature' }
+const LABELS = { temp: 'temperature', hum: 'humidity' }
 
 let _seq = 0
 const nid = () => `c${++_seq}${Date.now().toString(36)}`
@@ -60,9 +63,16 @@ export function scanToComponents(scan) {
 const ALWAYS_IDS = new Set(REGISTRY.always.map(c => c.id))
 
 export function scanNotice(scan) {
-  const sensors = scanToComponents(scan)
-    .filter(c => !ALWAYS_IDS.has(c.type))
-    .map(c => componentDef(c.type).label)
+  // Dedupe by TYPE: one MPU6050 answers at both 0x68 and 0x69 when AD0 floats,
+  // and both addresses ACK. Without this the status read "MPU6050, MPU6050"
+  // even though the canvas (mergeLayout) had correctly placed a single sprite.
+  const seen = new Set()
+  const sensors = []
+  for (const c of scanToComponents(scan)) {
+    if (ALWAYS_IDS.has(c.type) || seen.has(c.type)) continue
+    seen.add(c.type)
+    sensors.push(componentDef(c.type).label)
+  }
   if (sensors.length) return `SCAN: ${componentDef('esp32').label} + ${sensors.join(', ')}`
   return 'SCAN: ESP32 only — no sensors found (check 3V3/GND to each sensor)'
 }

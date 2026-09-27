@@ -111,6 +111,14 @@ test('scanNotice reports found components', () => {
   assert.equal(scanNotice(s), 'SCAN: ESP32 + MPU6050, DHT22')
 })
 
+test('scanNotice collapses two ACKed MPU addresses into one part', () => {
+  // 0x68 and 0x69 are both candidate addresses for a single MPU6050 whose AD0
+  // floats, and the sweep reports both. The canvas dedupes via mergeLayout; the
+  // status text must not read "MPU6050, MPU6050".
+  const s = parseScan('{"i2c":[{"addr":104},{"addr":105}],"dht22":{"gpio":4,"ok":false}}')
+  assert.equal(scanNotice(s), 'SCAN: ESP32 + MPU6050')
+})
+
 test('scanNotice flags an empty bus for wiring/power check', () => {
   const s = parseScan('{"i2c":[{"addr":104,"name":null}],"dht22":{"gpio":4,"ok":false}}')
   assert.equal(scanNotice(s), 'SCAN: ESP32 only — no sensors found (check 3V3/GND to each sensor)')
@@ -269,6 +277,14 @@ test('anomalyFlags treats null as absent, not as a NaN reading', () => {
   // per-sprite by notReporting() — not a NaN fault, and not a whole-board one.
   assert.deepEqual(anomalyFlags({ temp: null, hum: null, ax: null, ay: null, az: null, vib: null }), [])
   assert.deepEqual(anomalyFlags({ temp: NaN }), ['temperature reading is NaN'])  // a real NaN still faults
+})
+
+test('anomalyFlags checks the humidity band on the wire key hum', () => {
+  // SENSOR_RANGES used to key 'humidity' while the adapter emits 'hum', so this
+  // check never fired once. 20-90% is the DHT22's usable band.
+  assert.deepEqual(anomalyFlags({ hum: 95 }), ['humidity above 90'])
+  assert.deepEqual(anomalyFlags({ hum: 10 }), ['humidity below 20'])
+  assert.deepEqual(anomalyFlags({ hum: 55 }), [])
 })
 
 test('notReporting flags only the sensor whose reads have all gone null', () => {

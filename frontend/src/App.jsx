@@ -17,6 +17,13 @@ import './App.css'
 
 const CTX_DEVICE_ID = 'local'
 
+// Stable registry surface for CodeTab. Passed as an inline object literal this
+// was a NEW identity on every App render, and CodeTab's parse effect depends on
+// it — so the effect re-ran, called back into App state, re-rendered App, and
+// looped forever once a project folder was loaded. Module scope gives it one
+// identity for the app's lifetime.
+const REGISTRY_API = { componentDef, isKnown }
+
 // The adapter whose IDENT answered. Module-level rather than state: onData fires
 // ~10x/sec and must not re-render the tree to reach it.
 let activeAdapter = ADAPTER
@@ -245,7 +252,7 @@ export default function App() {
           <CodeTab 
             onProjectParsed={onProjectParsed} 
             onLayoutGenerated={onLayoutGenerated} 
-            registry={{ componentDef, isKnown }}
+            registry={REGISTRY_API}
           />
         </aside>
 
