@@ -10,9 +10,9 @@ html, body, #root {
 }
 
 body {
-  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
-  background: #070a12;
-  color: #f1f5f9;
+  font-family: Manrope, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  background: #0C0E11;
+  color: #F1F1EE;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-size: 14px;

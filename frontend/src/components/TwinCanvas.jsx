@@ -20,8 +20,7 @@ function Ring({ item, value, warn }) {
       <svg viewBox="0 0 84 84" width="84" height="84">
         <circle cx="42" cy="42" r={RING_R} className="ring-track" />
         <circle cx="42" cy="42" r={RING_R} className="ring-value" stroke={color}
-          strokeDasharray={`${RING_C * fill} ${RING_C}`} transform="rotate(-90 42 42)"
-          style={{ filter: `drop-shadow(0 0 4px ${color})` }} />
+          strokeDasharray={`${RING_C * fill} ${RING_C}`} transform="rotate(-90 42 42)" />
         <text x="42" y="44" textAnchor="middle" className="ring-number">{known ? value.toFixed(item.decimals) : '--'}</text>
         <text x="42" y="58" textAnchor="middle" className="ring-unit">{item.unit}</text>
       </svg>
@@ -214,7 +213,7 @@ export default function TwinCanvas({ layout, live = {}, onMove, onAdd, onWire, o
             onPointerDown={onPinPointerDown(c, p)}
             onClick={onPinClick(c, p)}
             style={{ left: at.x - 6, top: at.y - 6, background: color,
-              boxShadow: isArmed ? '0 0 0 3px var(--ot-warn)' : `0 0 7px ${color}` }}
+              boxShadow: isArmed ? '0 0 0 3px var(--ot-warn)' : `0 0 5px ${color}` }}
           >
             {/* The board's header already prints its own labels. */}
             {!componentDef(c.type)?.header && <span className="canvas-pin-label">{p.label}</span>}

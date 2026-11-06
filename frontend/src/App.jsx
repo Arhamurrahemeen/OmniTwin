@@ -12,7 +12,6 @@ import {
 } from './serial/serialModel.mjs'
 import { askTutor } from './api'
 import { formatCodeFlagsForTutor } from './code/codeFlags'
-import wordmark from './assets/wordmark.png'
 import './App.css'
 
 const CTX_DEVICE_ID = 'local'
@@ -255,7 +254,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="navbar">
-        <img className="navbar-wordmark" src={wordmark} alt="OmniTwin" />
+        <span className="wordmark">Omni<b>Twin</b></span>
         <span className="status-pill" title={device ? `${device.board} · fw ${device.fw}` : undefined}>
           <span className={`status-dot ${live_ ? '' : 'status-dot--off'}`} />
           {STATUS_TEXT[status]?.(device) ?? status}

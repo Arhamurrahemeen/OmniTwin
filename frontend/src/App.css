@@ -1,25 +1,26 @@
-/* ─── Palette ────────────────────────────────────────────── */
+/* ─── Palette: the brand's 3a dark mode ───────────────────── */
 :root {
-  --ot-bg:      #070a12;
-  --ot-panel:   rgba(13, 20, 33, 0.82);
-  --ot-line:    rgba(148, 163, 184, 0.17);
-  --ot-text:    #f1f5f9;
-  --ot-muted:   #94a3b8;
-  --ot-accent:  #0ea5e9;
-  --ot-good:    #10b981;
-  --ot-warn:    #f59e0b;
-  --ot-bad:     #ef4444;
-  --ot-pcb:     #141a26;
-  --ot-pcb-line:#3a4558;
-  --ot-chip:    #1e2736;
-  --ot-pin-off: #475569;
-  --ot-ring-a:  #f59e0b;
-  --ot-ring-b:  #22d3ee;
+  --ot-bg:      #0C0E11;
+  --ot-panel:   #16191E;
+  --ot-line:    #2A2E35;
+  --ot-text:    #F1F1EE;
+  --ot-muted:   #B4B7BC;
+  --ot-btn:     #F1F1EE;  /* primary buttons invert to light on dark */
+  --ot-btn-text:#121418;
+  --ot-good:    #02D0B1;
+  --ot-warn:    #F5A524;  /* functional only; the brand has no named warning colour yet */
+  --ot-bad:     #EF6A6A;
+  --ot-pcb:     #1F2329;
+  --ot-pcb-line:#2A2E35;
+  --ot-chip:    #121418;
+  --ot-pin-off: #3A3F47;
+  --ot-ring-a:  #6A97FF;
+  --ot-ring-b:  #02D0B1;
   /* Wire/pin kind colours. A TEACHING LABEL, not a measurement — nothing in the
      kit can measure voltage or current. */
-  --ot-power:   #ef4444;
-  --ot-ground:  #94a3b8;
-  --ot-signal:  #22d3ee;
+  --ot-power:   #EF6A6A;
+  --ot-ground:  #8A8E95;
+  --ot-signal:  #6A97FF;
 }
 
 /* ─── App shell ──────────────────────────────────────────── */
@@ -30,12 +31,7 @@
   height: 100vh;
   overflow: hidden;
   color: var(--ot-text);
-  background-color: var(--ot-bg);
-  background-image:
-    radial-gradient(circle at 15% 12%, rgba(0, 242, 254, 0.05), transparent 42%),
-    linear-gradient(rgba(255, 255, 255, 0.018) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255, 255, 255, 0.018) 1px, transparent 1px);
-  background-size: 100% 100%, 40px 40px, 40px 40px;
+  background: var(--ot-bg);
 }
 
 .navbar {
@@ -48,8 +44,16 @@
   border-bottom: 1px solid var(--ot-line);
 }
 
-/* The supplied asset, unchanged (docs/Brand.md §5b). */
-.navbar-wordmark { height: 30px; width: auto; display: block; border-radius: 5px; margin-right: auto; }
+/* Live text, as the brand's wordmark is set on the website. "Twin" starts at the
+   lifted blue because Signal Blue itself is hard to read on a dark ground. */
+.wordmark { margin-right: auto; font-size: 21px; font-weight: 800; letter-spacing: -0.02em; }
+.wordmark b {
+  font-weight: 800;
+  background: linear-gradient(90deg, #6A97FF, #00AFCE);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
 
 .status-pill {
   display: flex;
@@ -88,8 +92,8 @@ select.btn-quiet { background: var(--ot-chip); }
 .btn-primary {
   padding: 11px 22px;
   border-radius: 8px;
-  background: var(--ot-accent);
-  color: #fff;
+  background: var(--ot-btn);
+  color: var(--ot-btn-text);
   font-size: 14px;
   font-weight: 600;
   transition: filter 0.15s;
@@ -98,7 +102,7 @@ select.btn-quiet { background: var(--ot-chip); }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
 button:focus-visible, select:focus-visible, input:focus-visible {
-  outline: 2px solid var(--ot-signal);
+  outline: 2px solid var(--ot-ring-a);
   outline-offset: 2px;
 }
 
@@ -168,7 +172,7 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   display: flex;
   flex-direction: column;
   padding: 12px 14px 12px 46px;
-  background: rgba(13, 20, 33, 0.95);
+  background: var(--ot-pcb);
   border: 1px solid var(--ot-line);
   border-radius: 12px;
 }
@@ -185,7 +189,7 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 .ring { display: flex; flex-direction: column; align-items: center; gap: 4px; margin: 0; }
 .ring figcaption { font-size: 11px; color: var(--ot-muted); }
 .ring circle { fill: none; stroke-width: 6; }
-.ring-track { stroke: #1f2937; }
+.ring-track { stroke: var(--ot-line); }
 .ring-value { stroke-linecap: round; transition: stroke-dasharray 0.3s; }
 .ring-number { fill: var(--ot-text); font: 500 16px 'JetBrains Mono', monospace; }
 .ring-unit { fill: var(--ot-muted); font-size: 9px; }
@@ -310,7 +314,7 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 /* The reply is plain text, so preserve the model's line breaks instead of
    collapsing them into one run-on paragraph. */
 .tutor-user { color: var(--ot-text); white-space: pre-wrap; }
-.tutor-ai { color: var(--ot-signal); white-space: pre-wrap; }
+.tutor-ai { color: var(--ot-muted); white-space: pre-wrap; }
 .tutor-error { color: var(--ot-warn); font-size: 13px; }
 
 .tutor-panel form {
@@ -336,8 +340,8 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 .tutor-panel form button {
   padding: 5px 13px;
   border-radius: 6px;
-  background: var(--ot-accent);
-  color: #fff;
+  background: var(--ot-btn);
+  color: var(--ot-btn-text);
   font-size: 13px;
   font-weight: 600;
 }
@@ -351,7 +355,7 @@ button:focus-visible, select:focus-visible, input:focus-visible {
   z-index: 20;
   width: min(1000px, 88vw);
   display: flex;
-  background: #0b101b;
+  background: var(--ot-panel);
   border-right: 1px solid var(--ot-line);
   box-shadow: 18px 0 40px rgba(0, 0, 0, 0.45);
   transform: translateX(-102%);
@@ -396,7 +400,7 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 .code-dir { font-weight: 600; font-size: 10px; letter-spacing: 0.5px; text-transform: uppercase; color: var(--ot-muted); }
 .code-file { display: flex; align-items: center; gap: 6px; padding: 2px 4px; border-radius: 3px; cursor: pointer; }
 .code-file:hover { background: var(--ot-chip); }
-.code-file.selected { background: rgba(34, 211, 238, 0.12); color: var(--ot-signal); }
+.code-file.selected { background: rgba(23, 98, 252, 0.16); color: var(--ot-signal); }
 .code-flag-count { min-width: 18px; padding: 1px 5px; border-radius: 10px; background: var(--ot-warn); color: #111; font-size: 10px; text-align: center; }
 
 .code-flags-summary { margin-top: 12px; font-size: 12px; }
@@ -436,7 +440,7 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 .code-findings-grid { display: grid; gap: 8px; }
 .code-finding-item { padding: 6px 8px; border: 1px solid var(--ot-line); border-radius: 4px; }
 .code-finding-item ul { margin: 4px 0 0 16px; font-size: 11px; color: var(--ot-muted); }
-.code-confidence { margin-left: 8px; padding: 1px 6px; border-radius: 10px; font-size: 9px; font-weight: 700; text-transform: uppercase; color: var(--ot-signal); background: rgba(34, 211, 238, 0.1); }
+.code-confidence { margin-left: 8px; padding: 1px 6px; border-radius: 10px; font-size: 9px; font-weight: 700; text-transform: uppercase; color: var(--ot-signal); background: rgba(23, 98, 252, 0.16); }
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
