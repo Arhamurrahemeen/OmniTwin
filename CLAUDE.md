@@ -1,4 +1,4 @@
-# AGENTS.md
+# CLAUDE.md
 
 Working notes for AI agents (and humans) on the OmniTwin repo. Read this before
 touching anything — several footguns here are not visible from the code alone.

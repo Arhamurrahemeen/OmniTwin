@@ -30,7 +30,7 @@ poll the board through it. The repo's current direction says the opposite:
   - §4.1: *"OmniTwin never writes to a port … no write verbs exist in the serial
     layer"*, enforced by a grep test.
   - §7: *"Dropped entirely … ESP32/AVR firmware port targets … `PROBE` verb."*
-- `AGENTS.md`, Repo conventions: *"no board-specific firmware is ever proposed."*
+- `CLAUDE.md`, Repo conventions: *"no board-specific firmware is ever proposed."*
 
 The shipped code still implements the older kit model. `App.jsx:89-95` sends
 `SCAN`, `WHOAMI` and `STREAM on`, and `main.c` is the bundled node firmware.
@@ -46,7 +46,7 @@ A grep of `frontend/tests`, `tests` and `firmware/*.py` finds none.
 
 **This decision belongs to the project owner and is not resolved here.** If the
 kit firmware is still a supported product, Part B is coherent, and the spec and
-`AGENTS.md` need a note saying so. If the spec is the direction, B2 to B4 build
+`CLAUDE.md` need a note saying so. If the spec is the direction, B2 to B4 build
 toward a model the spec has already dropped. B1, B5 and B6 are safety and
 correctness fixes that stand either way.
 
@@ -129,12 +129,12 @@ correctness fixes that stand either way.
 | `main.c:426` (`reply_scan`) | `0x03..0x77` (117 addresses) |
 | `main.c:115` (`parse_whoami`) | `0x08..0x77` |
 | `twinlab_arduino_v1.ino:72` | `8..119` (`0x08..0x77`) |
-| `AGENTS.md:93`, `adapters/…:11`, `verify_node.py:107` | "117 addresses" / `0x03..0x77` |
+| `CLAUDE.md:93`, `adapters/…:11`, `verify_node.py:107` | "117 addresses" / `0x03..0x77` |
 
 ESP32 SCAN can therefore report an address in `0x03..0x07` that its own
 `WHOAMI` then rejects. Those addresses are reserved in the I2C spec. Changing
 to `0x08..0x77` (112 addresses) also means updating the "117" text in
-`AGENTS.md`, the adapter comment, and `verify_node.py`.
+`CLAUDE.md`, the adapter comment, and `verify_node.py`.
 
 ### (e) Pins are fixed in firmware, and the reference wiring is the firmware's: CONFIRMED, and wrong for Arduino
 
@@ -266,10 +266,10 @@ These are for the project owner to decide.
   `.ino`, which writes `0x6B` at 10 Hz with no identification.
 - **B5:** this inverts three existing tests (§2c). Parser blind spot 3 is the
   same bug on the code side, so it may belong in B5 as well.
-- **B6:** also update `AGENTS.md:93`, the adapter comment, and `verify_node.py`
+- **B6:** also update `CLAUDE.md:93`, the adapter comment, and `verify_node.py`
   ("117").
 - **B2 to B4:** hold until §1 is decided.
 
 **Outcome (2026-11-06):** the owner chose to do all of B1 to B7. §1 stays open
-as a conflict with the proposed spec; both the spec and `AGENTS.md` note it.
+as a conflict with the proposed spec; both the spec and `CLAUDE.md` note it.
 Line numbers above describe the code as audited, before those fixes.
