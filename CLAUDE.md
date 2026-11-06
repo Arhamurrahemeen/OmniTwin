@@ -95,6 +95,12 @@ addresses); on an empty bus that takes ~12 s. That budget now lives on the
 adapter as `scanTimeoutMs: 20000` — do not fall back to `command()`'s 5 s
 default for a scan.
 
+**Opening the port resets the ESP32, so the first command is lost to boot.** Boot
+takes about 1 s and `detectAdapter` retries a silent `IDENT` (`identAttempts`).
+`uart_read_bytes` blocks until its buffer fills or its timeout ends, so that timeout
+is every command's latency: keep it in `pdMS_TO_TICKS(...)`, never a bare tick count.
+It was once 100 ticks, which is 1 s at this build's 100 Hz.
+
 **The board degrades gracefully — that's intentional, not a bug.** With no
 sensors it still answers IDENT/PING/SCAN and streams DHT-only rows with
 `ax/ay/az: null`. `stream_task` retries the MPU probe at ~1 Hz, so hot-plugging
@@ -146,6 +152,8 @@ There's no current sensor in the kit; don't build toward one.
 | `DIAG` | pull-up state, per-address probe, MPU register readbacks |
 
 Board pins: SDA=21, SCL=22, MPU6050 at `0x68`/`0x69`, DHT22 on GPIO4.
+`ACCEL_CONFIG` (0x1C) for +-8g is `0x10`: `AFS_SEL` is bits 4:3, and `0x20` sets the
+Z self-test instead. `verify_node.py` checks for ~1 g at rest, so keep the rig still.
 An MPU6050 ignores register writes for ~100 ms after power-on, so `mpu_try_init()`
 retries 10× and gates on a *readback*, not just an ACK.
 

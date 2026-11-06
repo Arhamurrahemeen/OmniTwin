@@ -167,6 +167,12 @@ def main(port):
         check("row carries temp/hum", "temp" in r or "hum" in r, json.dumps(r)[:120])
         print(f"        accel present: {has_accel}"
               + ("" if has_accel else "  (DHT-only row -- expected with no MPU)"))
+        if val == 104:
+            check("identified MPU6050 streams accel", has_accel, json.dumps(r)[:120])
+        if has_accel:
+            g = (r["ax"] ** 2 + r["ay"] ** 2 + r["az"] ** 2) ** 0.5
+            check("accel at rest is ~1 g (range matches ACC_LSB; keep the rig still)",
+                  0.7 < g < 1.3, f"{g:.3f} g")
     send("STREAM off", 1.0)
     quiet = drain(1.5)
     check("STREAM off actually stops the stream", not quiet, f"{len(quiet)} rows after off")

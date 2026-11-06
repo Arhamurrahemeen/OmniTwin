@@ -255,8 +255,9 @@ static void mpu_init_regs(void)
     mpu_w(0x1A, 0x03);   /* CONFIG: DLPF 44Hz */
     mpu_w(0x19, 0x00);   /* SMPLRT_DIV: 1kHz */
     mpu_w(0x1B, 0x08);   /* GYRO_CONFIG: +-500 dps */
-    mpu_w(0x1C, 0x20);   /* ACCEL_CONFIG: AFS_SEL=2 = +-8g. 0x10 is +-4g, which
-                            contradicted ACC_LSB=4096 and halved every reading. */
+    mpu_w(0x1C, 0x10);   /* ACCEL_CONFIG: AFS_SEL (bits 4:3) = 2 = +-8g, matching
+                            ACC_LSB=4096. 0x20 is NOT that: it sets ZA_ST (Z self-test)
+                            and leaves the range at +-2g. */
 }
 
 static bool mpu_try_init(void)
@@ -310,7 +311,7 @@ static bool mpu_try_init(void)
            at rest. Unready means the board streams nulls instead, the canvas
            badges the part "not reporting", and the fault is visible. */
         if (mpu_r(0x6B, &pwr, 1) == ESP_OK && (pwr & MPU_SLEEP_BIT) == 0 &&
-            mpu_r(0x1C, &acc, 1) == ESP_OK && (acc & 0x18) == 0x18) {   /* AFS_SEL = +-8g */
+            mpu_r(0x1C, &acc, 1) == ESP_OK && (acc & 0x18) == 0x10) {   /* AFS_SEL = +-8g */
             g_mpu_ready = true;
             ESP_LOGI(TAG, "MPU6050 found + configured at 0x%02X", g_mpu_addr);
             return true;
@@ -640,7 +641,11 @@ static void uart_task(void *arg)
     uint8_t buf[UART_BUF];
 
     while (1) {
-        int got = uart_read_bytes(UART_NUM_0, buf, sizeof buf, 100);
+        /* uart_read_bytes blocks until the buffer FILLS or the timeout ends, and a
+           command is far shorter than the buffer, so this timeout is every command's
+           latency. A literal 100 here is 100 ticks: one full second at 100 Hz, which
+           outran the browser's WHOAMI timeout. */
+        int got = uart_read_bytes(UART_NUM_0, buf, sizeof buf, pdMS_TO_TICKS(10));
         for (int i = 0; i < got; i++) {
             if (buf[i] == '\n' || buf[i] == '\r') {
                 if (len > 0) {
