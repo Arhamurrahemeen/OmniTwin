@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert'
-import { detectAdapter, detectComponents, pinDef } from '../src/serial/serialModel.mjs'
+import { detectAdapter, detectComponents, identifyScan, pinDef, scanNotice, startReadPolling } from '../src/serial/serialModel.mjs'
 import { SerialSession } from '../src/serial/serialBridge.js'
 import ADAPTER from '../src/serial/adapters/twinlab_esp32_v1.js'
 
@@ -107,10 +107,70 @@ test('detectComponents merges WHOAMI answers into the scan', async () => {
   assert.ok(types.includes('mpu6050'))
 })
 
-test('detectComponents still resolves when the WHOAMI probe fails', async () => {
+test('a failed or unanswered WHOAMI draws no part: the address is not identity', async () => {
   const scan = { i2c: [{ addr: 104 }], dht22: { gpio: 4, ok: true } }
-  const types = (await detectComponents(scan, async () => { throw new Error('nack') })).map(c => c.type)
-  assert.ok(types.includes('mpu6050'))   // falls back to the address
+  for (const ask of [async () => { throw new Error('nack') }, async () => null]) {
+    const types = (await detectComponents(scan, ask)).map(c => c.type)
+    assert.deepEqual(types.sort(), ['breadboard', 'dht22', 'esp32'])
+    assert.match(scanNotice(await identifyScan(scan, ask)), /unidentified I2C at 0x68/)
+  }
+})
+
+test('identifyScan carries the WHOAMI byte, so the notice names the chip', async () => {
+  const scan = { i2c: [{ addr: 104 }], dht22: { gpio: 4, ok: false } }
+  assert.equal(scanNotice(await identifyScan(scan, async () => 0x68)), 'SCAN: ESP32 + MPU6050')
+})
+
+test('READ reply parsing and the fw gate', () => {
+  assert.deepEqual(ADAPTER.parseRead({ read: [1, 2] }), [1, 2])
+  for (const bad of [{ read: null }, {}, { error: 'unknown command' }, null])
+    assert.equal(ADAPTER.parseRead(bad), null, JSON.stringify(bad))
+  assert.equal(ADAPTER.readCommand(118, 0xF7, 2), 'READ 118 247 2')
+  assert.equal(ADAPTER.supportsRead({ fw: '1.3' }), true)
+  for (const info of [{ fw: '1.2' }, { fw: '1.1' }, {}, null])
+    assert.equal(ADAPTER.supportsRead(info), false, JSON.stringify(info))
+})
+
+test('toReading output covers exactly streamKeys, so polling can never shadow the stream', () => {
+  assert.deepEqual(Object.keys(ADAPTER.toReading({ ts: 1 })).sort(), [...ADAPTER.streamKeys].sort())
+})
+
+const BARO = { reg: 0xF7, addr: 118, spec: { len: 2, signed: false, scale: 1, fields: ['pressure'] } }
+
+test('polling decodes each pass, and a failed read becomes null', async () => {
+  const seen = []
+  let n = 0
+  const stop = startReadPolling([BARO], async () => { if (n++) throw new Error('timeout'); return [1, 0] },
+    (v) => seen.push(v), 1)
+  while (seen.length < 2) await new Promise(r => setTimeout(r, 1))
+  await stop()
+  assert.deepEqual(seen[0], { pressure: 256 })
+  assert.deepEqual(seen[1], { pressure: null })
+})
+
+test('stop() waits for the in-flight READ, so a SCAN never meets "already in flight"', async () => {
+  let inFlight = false
+  let release
+  const stop = startReadPolling([BARO], () => {
+    inFlight = true
+    return new Promise(r => { release = () => { inFlight = false; r([0, 0]) } })
+  }, () => {}, 1)
+  await new Promise(r => setTimeout(r, 1))
+  let stopped = false
+  const stopping = stop().then(() => { stopped = true })
+  await new Promise(r => setTimeout(r, 1))
+  assert.equal(stopped, false)
+  assert.equal(inFlight, true)
+  release()
+  await stopping
+  assert.equal(inFlight, false)
+})
+
+test('an empty plan sends nothing', async () => {
+  let asked = 0
+  const stop = startReadPolling([], async () => { asked++ }, () => {})
+  await stop()
+  assert.equal(asked, 0)
 })
 
 test('detectComponents does not create a component for an unknown address', async () => {

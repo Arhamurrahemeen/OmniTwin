@@ -71,11 +71,11 @@ test('scanToComponents tolerates the bus{} block in the SCAN reply', () => {
 // These pin the refactor's contract: same behaviour as before for every case
 // the old I2C_MAP handled, plus WHOAMI identity where the two disagree.
 
-test('scanToComponents resolves the 1.1 SCAN shape (raw address, no name field)', () => {
+test('a raw 1.1 SCAN entry with no WHOAMI yet is unidentified, not an MPU6050', () => {
   const s = parseScan('{"i2c":[{"addr":104}],"dht22":{"gpio":4,"ok":true}}')
   const types = scanToComponents(s).map(c => c.type)
-  assert.ok(types.includes('mpu6050'))
-  assert.equal(scanNotice(s), 'SCAN: ESP32 + MPU6050, DHT22')
+  assert.ok(!types.includes('mpu6050'))
+  assert.equal(scanNotice(s), 'SCAN: ESP32 + DHT22; unidentified I2C at 0x68 (add it by hand)')
 })
 
 test('scanToComponents ignores an address no registry entry claims', () => {
@@ -108,20 +108,25 @@ test('addComponent rejects an id the registry does not define', () => {
 
 test('scanNotice reports found components', () => {
   const s = parseScan('{"i2c":[{"addr":104,"name":"mpu6050"},{"addr":72,"name":null}],"dht22":{"gpio":4,"ok":true}}')
-  assert.equal(scanNotice(s), 'SCAN: ESP32 + MPU6050, DHT22')
+  assert.equal(scanNotice(s), 'SCAN: ESP32 + MPU6050, DHT22; unidentified I2C at 0x48 (add it by hand)')
 })
 
 test('scanNotice collapses two ACKed MPU addresses into one part', () => {
   // 0x68 and 0x69 are both candidate addresses for a single MPU6050 whose AD0
   // floats, and the sweep reports both. The canvas dedupes via mergeLayout; the
   // status text must not read "MPU6050, MPU6050".
-  const s = parseScan('{"i2c":[{"addr":104},{"addr":105}],"dht22":{"gpio":4,"ok":false}}')
+  const s = parseScan('{"i2c":[{"addr":104,"whoami":104},{"addr":105,"whoami":104}],"dht22":{"gpio":4,"ok":false}}')
   assert.equal(scanNotice(s), 'SCAN: ESP32 + MPU6050')
 })
 
 test('scanNotice flags an empty bus for wiring/power check', () => {
-  const s = parseScan('{"i2c":[{"addr":104,"name":null}],"dht22":{"gpio":4,"ok":false}}')
+  const s = parseScan('{"i2c":[],"dht22":{"gpio":4,"ok":false}}')
   assert.equal(scanNotice(s), 'SCAN: ESP32 only — no sensors found (check 3V3/GND to each sensor)')
+})
+
+test('scanNotice reports a chip on the bus that nothing could identify', () => {
+  const s = parseScan('{"i2c":[{"addr":104,"name":null}],"dht22":{"gpio":4,"ok":false}}')
+  assert.equal(scanNotice(s), 'SCAN: ESP32; unidentified I2C at 0x68 (add it by hand)')
 })
 
 test('defaultLayout places each component uniquely and stores x/y', () => {

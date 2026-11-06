@@ -3,12 +3,14 @@
  * Line-driven JSON protocol over UART0 (the USB bridge's console line), so a
  * browser using the Web Serial API opens the same COM port the flasher uses.
  *
- *   IDENT      -> {"device":"ESP32","fw":"1.2","board":"twinlab-node","id":"TL-XXXXXX"}
+ *   IDENT      -> {"device":"ESP32","fw":"1.3","board":"twinlab-node","id":"TL-XXXXXX"}
  *   SCAN       -> {"i2c":[{"addr":104}],"dht22":{"gpio":4,"ok":true}}   (raw addrs; the
  *                  browser resolves part identity via WHOAMI + its registry)
  *   WHOAMI a r -> {"whoami":<int>} or -1. The browser supplies the register, so
  *                  firmware holds no per-sensor knowledge.
- *   STREAM on  -> {"stream":"on"}  then ~10 Hz  {"ts","temp","hum","ax","ay","az"}
+ *   READ a r n -> {"read":[<byte>,...]} or {"read":null}. n is 1..16. Reads only;
+ *                  the browser supplies the registers from its registry.
+ *   STREAM on -> {"stream":"on"}  then ~10 Hz  {"ts","temp","hum","ax","ay","az"}
  *   STREAM off -> {"stream":"off"} (stops the stream)
  *   PING       -> {"pong":true}
  *   DIAG       -> {"bus":{...},"probe":{...},"mpu":{"ready",addr,"read_ok"}}
@@ -39,6 +41,14 @@
 #define SCL_IO   22
 #define MPU_ADDR     0x68   /* AD0 low */
 #define MPU_ADDR_ALT 0x69   /* AD0 high (some modules float it up) */
+#define MPU_WHO_AM_I 0x75   /* reads 0x68 on an MPU-6050 whatever AD0 is */
+
+/* The 7-bit I2C addresses SCAN sweeps and WHOAMI accepts. 0x00..0x07 and
+   0x78..0x7F are reserved by the I2C spec. One pair, so the two cannot drift. */
+#define I2C_ADDR_MIN 0x08
+#define I2C_ADDR_MAX 0x77
+
+#define READ_MAXLEN 16      /* READ's byte bound */
 
 /* DHT22 data pin. Needs a 4.7k-10k pull-up to 3V3 on the line; the internal
    pull-up is enabled too but is too weak to rely on alone. */
@@ -86,11 +96,14 @@ static bool g_sda_up = false, g_scl_up = false;  /* pull-up snapshot at boot */
 
 /* ---- protocol types + helpers (Task 1 selftests reference these) ---------- */
 
-typedef enum { CMD_IDENT, CMD_SCAN, CMD_STREAM_ON, CMD_STREAM_OFF, CMD_PING, CMD_DIAG, CMD_WHOAMI, CMD_NONE } cmd_t;
+typedef enum { CMD_IDENT, CMD_SCAN, CMD_STREAM_ON, CMD_STREAM_OFF, CMD_PING, CMD_DIAG, CMD_WHOAMI, CMD_READ, CMD_NONE } cmd_t;
 
 /* Parsed "WHOAMI <addr> <reg>". ok is false for a missing, malformed, or
    out-of-range argument — the 7-bit I2C range is 0x08..0x77. */
 typedef struct { int addr; int reg; bool ok; } whoami_arg_t;
+
+/* Parsed "READ <addr> <reg> <len>", same rules plus len in 1..READ_MAXLEN. */
+typedef struct { int addr; int reg; int len; bool ok; } read_arg_t;
 
 static cmd_t parse_cmd(const char *line)   /* see proto_selftest */
 {
@@ -102,6 +115,7 @@ static cmd_t parse_cmd(const char *line)   /* see proto_selftest */
     else if (strcmp(line, "DIAG") == 0)      return CMD_DIAG;
     /* Accept the bare verb and the verb+args forms, but not "WHOAMIT ...". */
     else if (strncmp(line, "WHOAMI", 6) == 0 && (line[6] == '\0' || line[6] == ' ')) return CMD_WHOAMI;
+    else if (strncmp(line, "READ", 4) == 0 && (line[4] == '\0' || line[4] == ' ')) return CMD_READ;
     return CMD_NONE;
 }
 
@@ -112,10 +126,41 @@ static whoami_arg_t parse_whoami(const char *line)
     /* "%i" takes decimal or 0x-hex; the "%c" catch rejects trailing junk.
        "WHOAMI" alone fails the %i match, so it is rejected too. */
     if (sscanf(line, "WHOAMI %i %i %c", &a.addr, &a.reg, &tail) != 2) return a;
-    if (a.addr < 0x08 || a.addr > 0x77) return a;
+    if (a.addr < I2C_ADDR_MIN || a.addr > I2C_ADDR_MAX) return a;
     if (a.reg < 0 || a.reg > 0xFF) return a;
     a.ok = true;
     return a;
+}
+
+static read_arg_t parse_read(const char *line)
+{
+    read_arg_t a = { 0, 0, 0, false };
+    char tail;
+    if (sscanf(line, "READ %i %i %i %c", &a.addr, &a.reg, &a.len, &tail) != 3) return a;
+    if (a.addr < I2C_ADDR_MIN || a.addr > I2C_ADDR_MAX) return a;
+    if (a.reg < 0 || a.reg > 0xFF) return a;
+    if (a.len < 1 || a.len > READ_MAXLEN) return a;
+    a.ok = true;
+    return a;
+}
+
+/* Worst case: READ_MAXLEN * "255," plus the wrapper. Formatted into one buffer so
+   one printf emits the whole line and a stream row cannot interleave mid-JSON. */
+#define READ_REPLY_MAX (READ_MAXLEN * 4 + 16)
+static void format_read(char *out, size_t size, const uint8_t *val, int len)
+{
+    int n = snprintf(out, size, "{\"read\":[");
+    for (int i = 0; i < len; i++)
+        n += snprintf(out + n, size - n, "%s%d", i ? "," : "", val[i]);
+    snprintf(out + n, size - n, "]}");
+}
+
+/* An ACK is not identity. Only a chip that answers WHO_AM_I with 0x68 is an
+   MPU-6050 and may receive configuration writes. (MPU-6500/9250 answer
+   0x70/0x71 and are deliberately rejected: their register maps differ.) */
+static bool mpu_whoami_ok(uint8_t whoami)
+{
+    return whoami == 0x68;
 }
 
 static void proto_selftest(void)
@@ -147,6 +192,43 @@ static void proto_selftest(void)
     assert(!parse_whoami("WHOAMI").ok);
     assert(!parse_whoami("WHOAMI 104").ok);
     assert(!parse_whoami("WHOAMI 999 117").ok);             /* out of 7-bit range */
+    assert(!parse_whoami("WHOAMI 7 117").ok);               /* 0x00..0x07 reserved */
+    assert(parse_whoami("WHOAMI 8 117").ok);                /* I2C_ADDR_MIN */
+    assert(parse_whoami("WHOAMI 119 117").ok);              /* I2C_ADDR_MAX */
+    assert(!parse_whoami("WHOAMI 120 117").ok);             /* 0x78.. reserved */
+
+    /* Identity gate for config writes: an ACK at 0x68 is not an MPU-6050. */
+    assert(mpu_whoami_ok(0x68));
+    assert(!mpu_whoami_ok(0x00));   /* e.g. an RTC's seconds register */
+    assert(!mpu_whoami_ok(0x70));   /* MPU-6500: different register map */
+    assert(!mpu_whoami_ok(0xFF));   /* floating bus */
+
+    /* READ argument parsing and reply shape. */
+    assert(parse_cmd("READ 104 59 6") == CMD_READ);
+    assert(parse_cmd("READ") == CMD_READ);              /* bare verb: bad args -> read:null */
+    assert(parse_cmd("READY 104 59 6") == CMD_NONE);    /* not our verb */
+    assert(parse_read("READ 104 59 6").ok);
+    assert(parse_read("READ 104 59 6").addr == 104);
+    assert(parse_read("READ 104 0x3B 6").reg == 0x3B);  /* hex accepted */
+    assert(parse_read("READ 104 59 6").len == 6);
+    assert(parse_read("READ 104 59 1").ok);             /* len lower bound */
+    assert(parse_read("READ 104 59 16").ok);            /* len upper bound */
+    assert(!parse_read("READ 104 59 0").ok);
+    assert(!parse_read("READ 104 59 17").ok);
+    assert(!parse_read("READ 104 59 -1").ok);
+    assert(!parse_read("READ 7 59 6").ok);              /* reserved address */
+    assert(!parse_read("READ 120 59 6").ok);
+    assert(!parse_read("READ 104 256 6").ok);           /* register is one byte */
+    assert(!parse_read("READ 104 59").ok);
+    assert(!parse_read("READ 104 59 6 junk").ok);
+    assert(!parse_read("READ").ok);
+
+    char reply[READ_REPLY_MAX];
+    format_read(reply, sizeof reply, (const uint8_t[]){ 0, 255 }, 2);
+    assert(strcmp(reply, "{\"read\":[0,255]}") == 0);
+    const uint8_t all_ff[READ_MAXLEN] = { [0 ... READ_MAXLEN - 1] = 0xFF };
+    format_read(reply, sizeof reply, all_ff, READ_MAXLEN);   /* worst case must not truncate */
+    assert(reply[strlen(reply) - 1] == '}');
 }
 
 /* ---- MPU6050 reads (verbatim from bench firmware) ------------------------ */
@@ -181,18 +263,36 @@ static bool mpu_try_init(void)
 {
     if (g_mpu_ready) return true;
 
-    uint8_t addr = 0;
-    if (i2c_master_probe(bus, MPU_ADDR, 100) == ESP_OK)      addr = MPU_ADDR;
-    else if (i2c_master_probe(bus, MPU_ADDR_ALT, 100) == ESP_OK) addr = MPU_ADDR_ALT;
-    if (!addr) return false;
+    /* Identify BEFORE any register write. An ACK at 0x68/0x69 is not identity:
+       a DS1307/DS3231 RTC also lives at 0x68, and the config writes below would
+       corrupt it — once per second, forever, via stream_task's retry. So the
+       handle is kept only while the chip's WHO_AM_I reads 0x68, re-checked on
+       every retry (the part may have been swapped); anything else is released
+       untouched. A kept handle is reused, not re-added, so a chip in its
+       write-lockout no longer leaks a device handle every second. */
+    if (!g_mpu_dev_added) {
+        uint8_t addr = 0;
+        if (i2c_master_probe(bus, MPU_ADDR, 100) == ESP_OK)      addr = MPU_ADDR;
+        else if (i2c_master_probe(bus, MPU_ADDR_ALT, 100) == ESP_OK) addr = MPU_ADDR_ALT;
+        if (!addr) return false;
 
-    i2c_device_config_t dev_cfg = {
-        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
-        .device_address  = addr,
-        .scl_speed_hz    = 100000,   /* 100kHz tolerates marginal breadboard wiring far better than 400kHz */
-    };
-    if (i2c_master_bus_add_device(bus, &dev_cfg, &mpu) != ESP_OK) return false;
-    g_mpu_dev_added = true;   /* so DIAG can read registers even if the gate below fails */
+        i2c_device_config_t dev_cfg = {
+            .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+            .device_address  = addr,
+            .scl_speed_hz    = 100000,   /* 100kHz tolerates marginal breadboard wiring far better than 400kHz */
+        };
+        if (i2c_master_bus_add_device(bus, &dev_cfg, &mpu) != ESP_OK) return false;
+        g_mpu_addr = addr;
+        g_mpu_dev_added = true;   /* DIAG may read it; it writes only after its own WHO_AM_I check */
+    }
+    uint8_t who = 0;
+    if (mpu_r(MPU_WHO_AM_I, &who, 1) != ESP_OK || !mpu_whoami_ok(who)) {
+        g_mpu_dev_added = false;   /* drop the flag first so DIAG stops using the handle */
+        i2c_master_bus_rm_device(mpu);
+        mpu = NULL;
+        g_mpu_addr = 0;
+        return false;
+    }
 
     for (int i = 0; i < 10; i++) {
         mpu_init_regs();
@@ -211,15 +311,14 @@ static bool mpu_try_init(void)
            badges the part "not reporting", and the fault is visible. */
         if (mpu_r(0x6B, &pwr, 1) == ESP_OK && (pwr & MPU_SLEEP_BIT) == 0 &&
             mpu_r(0x1C, &acc, 1) == ESP_OK && (acc & 0x18) == 0x18) {   /* AFS_SEL = +-8g */
-            g_mpu_addr = addr;
             g_mpu_ready = true;
-            ESP_LOGI(TAG, "MPU6050 found + configured at 0x%02X", addr);
+            ESP_LOGI(TAG, "MPU6050 found + configured at 0x%02X", g_mpu_addr);
             return true;
         }
         vTaskDelay(pdMS_TO_TICKS(200));   /* wait out the chip's power-on write-lockout */
     }
 
-    ESP_LOGE(TAG, "MPU at 0x%02X found but config never took (chip in startup lockout?)", addr);
+    ESP_LOGE(TAG, "MPU at 0x%02X found but config never took (chip in startup lockout?)", g_mpu_addr);
     return false;
 }
 
@@ -350,7 +449,7 @@ static void dht_task(void *arg)
 
 static void reply_ident(void)
 {
-    printf("{\"device\":\"ESP32\",\"fw\":\"1.2\",\"board\":\"twinlab-node\",\"id\":\"%s\"}\n", g_device_id);
+    printf("{\"device\":\"ESP32\",\"fw\":\"1.3\",\"board\":\"twinlab-node\",\"id\":\"%s\"}\n", g_device_id);
 }
 
 /* Read one WHOAMI register from an arbitrary address. The browser supplies the
@@ -377,6 +476,31 @@ static void reply_whoami(int addr, int reg)
         i2c_master_bus_rm_device(dev);
     }
     printf("{\"whoami\":%d}\n", out);
+}
+
+/* Read len bytes from a register on an arbitrary address. Same add/remove
+   pattern as reply_whoami; the only bus write is the register pointer. */
+/* ponytail: add/remove per call, as WHOAMI does. READ polls at ~5 Hz per part, far
+   below what this costs. Cache handles if polling ever gets much faster. */
+static void reply_read(int addr, int reg, int len)
+{
+    i2c_device_config_t cfg = {
+        .dev_addr_length = I2C_ADDR_BIT_LEN_7,
+        .device_address  = (uint16_t)addr,
+        .scl_speed_hz    = 100000,   /* 100kHz tolerates marginal breadboard wiring */
+    };
+    i2c_master_dev_handle_t dev = NULL;
+    uint8_t val[READ_MAXLEN];
+    bool ok = false;
+
+    if (i2c_master_bus_add_device(bus, &cfg, &dev) == ESP_OK) {
+        ok = i2c_master_transmit_receive(dev, (const uint8_t[]){ (uint8_t)reg }, 1, val, len, 100) == ESP_OK;
+        i2c_master_bus_rm_device(dev);
+    }
+    if (!ok) { printf("{\"read\":null}\n"); return; }
+    char out[READ_REPLY_MAX];
+    format_read(out, sizeof out, val, len);
+    printf("%s\n", out);
 }
 
 /* One-shot DHT22 read for SCAN. If a recent background attempt failed, wait
@@ -417,13 +541,14 @@ static bool dht_read_once(float *temp, float *hum)
 
 static void reply_scan(void)
 {
-    /* I2C 7-bit sweep 0x03..0x77. This reports the raw ACK'd address only —
+    /* I2C 7-bit sweep I2C_ADDR_MIN..MAX (0x08..0x77, 112 addresses — the range
+       WHOAMI accepts). This reports the raw ACK'd address only —
        part identity is the browser's job, via the WHOAMI command and its
        component registry. Short probe timeout so a dead/clamped bus returns
        in ~1s instead of 12s. */
     char list[512] = "";
     int n = 0;
-    for (int addr = 0x03; addr <= 0x77; addr++) {
+    for (int addr = I2C_ADDR_MIN; addr <= I2C_ADDR_MAX; addr++) {
         /* 100ms probe on the MPU addresses (a flaky MPU ACKs slowly), 25ms elsewhere. */
         int timeout = (addr == MPU_ADDR || addr == MPU_ADDR_ALT) ? 100 : 25;
         if (i2c_master_probe(bus, addr, timeout) == ESP_OK) {
@@ -453,11 +578,12 @@ static void reply_diag(void)
     int ax_raw = 0, ay_raw = 0, az_raw = 0;
     if (g_mpu_dev_added) {
         uint8_t v;
-        if (mpu_r(0x75, &v, 1) == ESP_OK) whoami = v;
+        if (mpu_r(MPU_WHO_AM_I, &v, 1) == ESP_OK) whoami = v;
         if (mpu_r(0x6B, &v, 1) == ESP_OK) pwr = v;
         /* Re-apply the SAME value init uses. DIAG used to write its own literal
-           here, so merely running DIAG changed the sensor's power state. */
-        mpu_w(0x6B, MPU_PWR_MGMT1);
+           here, so merely running DIAG changed the sensor's power state. Only to
+           a chip that just identified itself: the handle can outlive a swap. */
+        if (whoami >= 0 && mpu_whoami_ok((uint8_t)whoami)) mpu_w(0x6B, MPU_PWR_MGMT1);
         if (mpu_r(0x6B, &v, 1) == ESP_OK) pwr_after = v;
         if (mpu_r(0x1A, &v, 1) == ESP_OK) cfg = v;
         if (mpu_r(0x1C, &v, 1) == ESP_OK) accel_cfg = v;
@@ -494,6 +620,12 @@ static void handle_cmd(cmd_t cmd, const char *line)
             whoami_arg_t a = parse_whoami(line);
             if (a.ok) reply_whoami(a.addr, a.reg);
             else printf("{\"whoami\":-1}\n");
+            break;
+        }
+        case CMD_READ: {
+            read_arg_t a = parse_read(line);
+            if (a.ok) reply_read(a.addr, a.reg, a.len);
+            else printf("{\"read\":null}\n");
             break;
         }
         default:             printf("{\"error\":\"unknown command\"}\n"); break;

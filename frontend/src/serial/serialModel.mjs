@@ -2,10 +2,10 @@
 // Component identity, geometry, and pins come from the data-driven registry
 // (src/registry/components.json), not from tables in this file.
 
-import { REGISTRY, allComponents, componentDef, componentPins, isKnown, pinDef, resolveScanEntry, whoamiRequests } from '../registry/registry.mjs'
+import { REGISTRY, allComponents, componentDef, componentPins, decodeRead, isKnown, pinDef, readPlan, resolveScanEntry, unidentifiedAddrs, whoamiRequests } from '../registry/registry.mjs'
 
 // Re-exported so UI modules have one import site for registry data.
-export { allComponents, componentDef, componentPins, isKnown, pinDef, whoamiRequests }
+export { allComponents, componentDef, componentPins, isKnown, pinDef, readPlan, whoamiRequests }
 
 // Ranges key on the WIRE key the adapter emits — `hum`, not `humidity`. The old
 // `humidity` key never matched a reading, so the 20-90% check was dead code
@@ -73,7 +73,13 @@ export function scanNotice(scan) {
     seen.add(c.type)
     sensors.push(componentDef(c.type).label)
   }
-  if (sensors.length) return `SCAN: ${componentDef('esp32').label} + ${sensors.join(', ')}`
+  // An address that ACKed but could not be identified is reported, not drawn:
+  // the student learns something is on the bus without a guessed sprite.
+  const unknown = unidentifiedAddrs(scan).map(a => `0x${a.toString(16).padStart(2, '0')}`)
+  const extra = unknown.length ? `; unidentified I2C at ${unknown.join(', ')} (add it by hand)` : ''
+  const board = componentDef('esp32').label
+  if (sensors.length) return `SCAN: ${board} + ${sensors.join(', ')}${extra}`
+  if (unknown.length) return `SCAN: ${board}${extra}`
   return 'SCAN: ESP32 only — no sensors found (check 3V3/GND to each sensor)'
 }
 
@@ -276,17 +282,16 @@ export async function detectAdapter(session, adapters) {
   return null
 }
 
-// Resolve a SCAN reply into components, asking the board to read each
-// identifiable address's WHOAMI register first. `askWhoami` is injected so this
-// stays free of Web Serial and testable with a stub. A probe that fails leaves
-// `whoami` null, which falls back to name/address resolution — so an unreflashed
-// 1.0 board still detects.
+// Annotate a SCAN reply with each identifiable address's WHOAMI byte, read off
+// the board. `askWhoami` is injected so this stays free of Web Serial and
+// testable with a stub. A probe that fails leaves `whoami` null/absent, which
+// resolves only through a 1.0 board's legacy `name` — never through the
+// address — so a failed read shows the chip as unidentified, not as a guess.
 //
 // Probes are SEQUENTIAL on purpose: SerialSession allows one outstanding
 // command, so firing them concurrently makes every probe after the first throw
-// "Command already in flight" and get silently swallowed — the fallback would
-// then mask it and mislabel a chip.
-export async function detectComponents(scan, askWhoami) {
+// "Command already in flight" and get silently swallowed.
+export async function identifyScan(scan, askWhoami) {
   const regs = new Map(whoamiRequests(scan).map(r => [r.addr, r.reg]))
   const entries = []
   for (const e of scan.i2c ?? []) {
@@ -294,7 +299,34 @@ export async function detectComponents(scan, askWhoami) {
     try { entries.push({ ...e, whoami: await askWhoami(e.addr, regs.get(e.addr)) }) }
     catch { entries.push(e) }
   }
-  return scanToComponents({ ...scan, i2c: entries })
+  return { ...scan, i2c: entries }
+}
+
+export async function detectComponents(scan, askWhoami) {
+  return scanToComponents(await identifyScan(scan, askWhoami))
+}
+
+// Poll a readPlan until stopped, handing each pass's decoded values to onValues.
+// A failed read decodes to nulls, so a part that drops off shows as not reporting.
+// The returned stop() resolves only once any in-flight command has finished:
+// SerialSession allows one at a time, so a Rescan must await it before its SCAN.
+// ponytail: fixed period, one shared loop. Add per-part rates if a sensor needs one.
+export function startReadPolling(plan, askRead, onValues, periodMs = 200) {
+  if (!plan.length) return async () => {}
+  let running = true
+  let wake = () => {}
+  const done = (async () => {
+    while (running) {
+      const values = {}
+      for (const { addr, reg, spec } of plan) {
+        const bytes = await askRead(addr, reg, spec.len).catch(() => null)
+        Object.assign(values, decodeRead(spec, bytes))
+      }
+      onValues(values)
+      if (running) await new Promise(r => { wake = r; setTimeout(r, periodMs) })
+    }
+  })()
+  return async () => { running = false; wake(); await done }
 }
 
 // Cheap local anomaly flags — zero LLM cost. Returns array of short strings.

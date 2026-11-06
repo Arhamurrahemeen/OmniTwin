@@ -3,6 +3,10 @@
 Status: proposed. Supersedes the framing of the two previous drafts of this
 document, which were built on a **wrong premise** (see §0.1).
 
+Open conflict (2026-11-06): the bundled node firmware gained a `READ` verb and the
+browser polls it, by the owner's decision, which §0.1, §4.1 and §7 argue against.
+See `docs/audit-hardware-detection.md` §1. This spec has not been revised.
+
 ## 0. What this is
 
 OmniTwin is **software** for students to debug their own semester hardware

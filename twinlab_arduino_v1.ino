@@ -69,7 +69,9 @@ void sendScan() {
   // I2C sweep
   String i2c = "[]";
   String i2cEntries = "";
-  for (byte addr = 8; addr <= 119; addr++) {
+  // 0x08..0x77: the same range as the ESP32 firmware and its WHOAMI. 0x00..0x07
+  // and 0x78..0x7F are reserved by the I2C spec.
+  for (byte addr = 0x08; addr <= 0x77; addr++) {
     Wire.beginTransmission(addr);
     if (Wire.endTransmission() == 0) {
       if (i2cEntries.length() > 0) i2cEntries += ",";
@@ -87,18 +89,19 @@ void sendScan() {
   Serial.println(scan);
 }
 
-void sendWhoami(int addr, int reg) {
+// One register byte, or -1 when the address does not answer.
+int readReg(byte addr, byte reg) {
   Wire.beginTransmission(addr);
   Wire.write(reg);
-  if (Wire.endTransmission(false) == 0) {
-    Wire.requestFrom(addr, (byte)1);
-    if (Wire.available()) {
-      byte val = Wire.read();
-      Serial.println("{\"whoami\":" + String(val) + "}");
-      return;
-    }
-  }
-  Serial.println("{\"whoami\":-1}");
+  if (Wire.endTransmission(false) != 0) return -1;
+  Wire.requestFrom(addr, (byte)1);
+  return Wire.available() ? Wire.read() : -1;
+}
+
+void sendWhoami(int addr, int reg) {
+  // Same bounds as the ESP32 firmware's parse_whoami.
+  int val = (addr >= 0x08 && addr <= 0x77 && reg >= 0 && reg <= 0xFF) ? readReg(addr, reg) : -1;
+  Serial.println("{\"whoami\":" + String(val) + "}");
 }
 
 void sendStream() {
@@ -107,9 +110,14 @@ void sendStream() {
 
   // Read MPU6050 if present (0x68 or 0x69)
   float ax = NAN, ay = NAN, az = NAN;
-  for (byte mpuAddr : {0x68, 0x69}) {
-    Wire.beginTransmission(mpuAddr);
-    if (Wire.endTransmission() == 0) {
+  // A plain array, not `for (x : {..})`: that form needs std::initializer_list,
+  // which the AVR core does not ship.
+  const byte MPU_ADDRS[] = { 0x68, 0x69 };
+  for (byte i = 0; i < 2; i++) {
+    byte mpuAddr = MPU_ADDRS[i];
+    // An ACK is not identity: a DS1307/DS3231 RTC also sits at 0x68. Write
+    // only to a chip whose WHO_AM_I (0x75) reads 0x68.
+    if (readReg(mpuAddr, 0x75) == 0x68) {
       // Wake up MPU
       Wire.beginTransmission(mpuAddr);
       Wire.write(0x6B); Wire.write(0x00); // PWR_MGMT_1

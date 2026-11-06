@@ -1,5 +1,5 @@
 {
-  "$comment": "Single source of truth for component identity, sprite geometry, and pin kinds. Adding a sensor = an entry here, no firmware or JS change. whoamiReg/whoamiVal are hex strings matching the WHOAMI <addr> <reg> reply. kind drives wire color and the wiring-correctness check.",
+  "$comment": "Single source of truth for component identity, sprite geometry, and pin kinds. Adding an I2C sensor = an entry here, no firmware or JS change for identity (whoamiReg/whoamiVal: hex strings matching the WHOAMI <addr> <reg> reply) and, with optional readRegs, for data. readRegs = [{reg: hex string, len: 1..16 bytes, signed: bool, scale: multiplier, fields: reading names}]; len is split evenly across fields, each big-endian. Polling only reads: a chip that must be configured before it converts cannot stream this way. kind drives wire color and the wiring-correctness check.",
   "i2c": [
     {
       "id": "mpu6050",
@@ -8,6 +8,8 @@
       "whoamiReg": "0x75",
       "whoamiVal": "0x68",
       "reads": ["ax", "ay", "az"],
+      "$readRegs": "1/4096 per LSB = the +-8g range the node firmware configures. Not polled on that firmware: its stream already owns these fields (adapter.streamKeys).",
+      "readRegs": [{ "reg": "0x3B", "len": 6, "signed": true, "scale": 0.000244140625, "fields": ["ax", "ay", "az"] }],
       "size": { "w": 70, "h": 70 },
       "defaultPos": { "x": 320, "y": 90 },
       "pins": [

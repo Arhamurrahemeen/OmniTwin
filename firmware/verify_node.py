@@ -93,7 +93,7 @@ def main(port):
     if ident is None:
         print("\nBoard did not answer. Check the cable and that firmware is flashed.")
         return 1
-    check("fw is 1.2", ident.get("fw") == "1.2", f"got {ident.get('fw')!r}")
+    check("fw is 1.3", ident.get("fw") == "1.3", f"got {ident.get('fw')!r}")
     check("device id looks like TL-XXXXXX", str(ident.get("id", "")).startswith("TL-"),
           repr(ident.get("id")))
 
@@ -104,7 +104,7 @@ def main(port):
           f"mpu.ready={diag.get('mpu', {}).get('ready') if diag else None}")
 
     print("\n-- SCAN: raw addresses, no part name (fw 1.1+ contract) --")
-    scan = send("SCAN", 20.0)   # 117-address sweep: ~12s on an empty bus
+    scan = send("SCAN", 20.0)   # 112-address sweep: ~12s on an empty bus
     if scan is None:
         check("SCAN answers", False, "no reply within 20s")
     else:
@@ -113,6 +113,9 @@ def main(port):
         check("no entry carries a 'name' field (identity is the browser's job)",
               all("name" not in e for e in i2c),
               str([e for e in i2c if "name" in e]))
+        check("every address is in 0x08..0x77 (reserved ranges not swept)",
+              all(0x08 <= e.get("addr", 0) <= 0x77 for e in i2c),
+              str([e.get("addr") for e in i2c]))
         check("SCAN still reports dht22 + bus", "dht22" in scan and "bus" in scan,
               f"dht22={scan.get('dht22')}")
 
@@ -138,6 +141,19 @@ def main(port):
     check("missing register rejected (WHOAMI 104 -> -1)",
           (send("WHOAMI 104", 2.0) or {}).get("whoami") == -1)
     check("bare WHOAMI rejected (-> -1)", (send("WHOAMI", 2.0) or {}).get("whoami") == -1)
+
+    print("\n-- READ: register read + argument validation --")
+    r = send("READ 104 117 1", 2.0)
+    check("READ answers", r is not None and "read" in (r or {}), json.dumps(r))
+    if val == 104:
+        check("READ of WHO_AM_I agrees with WHOAMI", (r or {}).get("read") == [104], json.dumps(r))
+    else:
+        print("        No MPU6050 at 0x68: the read path is NOT proven, only the parsing.")
+    for bad in ("READ 104 117 0", "READ 104 117 17", "READ 7 117 1", "READ 104 117", "READ"):
+        reply = send(bad, 2.0) or {}
+        check(f"{bad!r} rejected (-> null)",
+              "read" in reply and reply["read"] is None, json.dumps(reply))
+
     check("unknown verb still gets the error reply",
           "error" in (send("BOGUS") or {}), json.dumps(send("NOPE")))
 

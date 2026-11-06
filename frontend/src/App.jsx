@@ -7,7 +7,7 @@ import { supportsSerial, requestPort, SerialSession } from './serial/serialBridg
 import { DemoSession } from './serial/demoSession.mjs'
 import ADAPTER from './serial/adapters/twinlab_esp32_v1'
 import {
-  defaultLayout, parseScan, detectAdapter, detectComponents, scanNotice, allComponents,
+  defaultLayout, parseScan, detectAdapter, identifyScan, scanToComponents, scanNotice, allComponents, readPlan, startReadPolling,
   addComponent, removeComponent, moveComponent, addWire, removeWire, anomalyFlags, partFaults, wiringFlags, componentDef, notReporting, mergeLayout, mergeDeclaredLayout, isKnown,
 } from './serial/serialModel.mjs'
 import { askTutor } from './api'
@@ -27,6 +27,7 @@ const REGISTRY_API = { componentDef, isKnown, allComponents }
 // The adapter whose IDENT answered. Module-level rather than state: onData fires
 // ~10x/sec and must not re-render the tree to reach it.
 let activeAdapter = ADAPTER
+let activeInfo = null
 
 // ponytail: ?demo=1 replaces the board with a fake session — offline demo + deck screenshots. ?tutor=1 pre-seeds a Q&A for the tutor shot.
 const isDemo = () => new URLSearchParams(window.location.search).has('demo')
@@ -45,6 +46,9 @@ export default function App() {
   const [codeFlagsList, setCodeFlagsList] = useState([])
   const [declaredComponents, setDeclaredComponents] = useState([])
   const sessionRef = useRef(null)
+  const pollPlan = useRef([])
+  const polled = useRef({})                     // latest READ-polled values
+  const stopPolling = useRef(async () => {})
 
   // Sensor flags change ~10x/sec; wiring faults change only when the layout
   // does. Keeping them apart stops the tutor context being rebuilt — and
@@ -91,9 +95,23 @@ export default function App() {
     const askWhoami = (addr, reg) =>
       session.command(adapter.identityCommand(addr, reg), adapter.identityTimeoutMs)
         .then(adapter.parseIdentity)
-    const detected = await detectComponents(scan, askWhoami)
-    setScanInfo(scanNotice(scan))
-    setLayout(prev => mergeLayout(prev, detected))
+    // The notice must read the WHOAMI-annotated scan too: the raw scan carries
+    // no identity, so it would report every chip as unidentified.
+    const identified = await identifyScan(scan, askWhoami)
+    setScanInfo(scanNotice(identified))
+    setLayout(prev => mergeLayout(prev, scanToComponents(identified)))
+    pollPlan.current = adapter.supportsRead(activeInfo) ? readPlan(identified, adapter.streamKeys) : []
+    polled.current = {}
+  }
+
+  // Registry-driven parts poll over READ. Values land in a ref and reach the UI
+  // with the next stream frame, which the firmware emits even on a bare board.
+  const startPolling = (session, adapter) => {
+    stopPolling.current = startReadPolling(
+      pollPlan.current,
+      (addr, reg, len) => session.command(adapter.readCommand(addr, reg, len), adapter.readTimeoutMs).then(adapter.parseRead),
+      (values) => { polled.current = { ...polled.current, ...values } },
+    )
   }
 
   // ponytail: a failed rescan must not look like a dead session. STREAM is
@@ -102,11 +120,13 @@ export default function App() {
     const s = sessionRef.current
     if (!s) return
     setStatus('scanning')
+    await stopPolling.current()   // SCAN needs the one command slot
     try {
       await runScan(s, activeAdapter)
     } catch (err) {
       setTutor(t => ({ ...t, error: `Rescan failed: ${err.message}` }))
     } finally {
+      startPolling(s, activeAdapter)
       setStatus('streaming')
     }
   }
@@ -116,6 +136,7 @@ export default function App() {
     const closeSession = async () => {
       const s = sessionRef.current
       sessionRef.current = null
+      await stopPolling.current()
       // Tell the board to stop streaming before dropping the port — otherwise it
       // keeps pushing 10 Hz of JSON at 115200 until the board is unplugged.
       try { if (s?.writer) await s.command(activeAdapter.streamOffCommand, 500) } catch { /* already gone */ }
@@ -136,12 +157,12 @@ export default function App() {
         isData: ADAPTER.isReading,
         onData: (obj) => {
           if (activeAdapter.isReading(obj)) {
-            const clean = activeAdapter.toReading(obj)
+            const clean = { ...activeAdapter.toReading(obj), ...polled.current }
             setLive(clean)
             setSensorFlags(anomalyFlags(clean))
           }
         },
-        onError: (err) => { setStatus('error'); setTutor(t => ({ ...t, error: err.message })) },
+        onError: (err) => { stopPolling.current(); setStatus('error'); setTutor(t => ({ ...t, error: err.message })) },
       })
       sessionRef.current = session
       await session.open()
@@ -167,12 +188,14 @@ export default function App() {
       }
       const adapter = found.adapter
       activeAdapter = adapter
+      activeInfo = found.info
       setDevice(found.info)
 
       setStatus('scanning')
       await runScan(session, adapter)
 
       await session.command(adapter.streamOnCommand)
+      startPolling(session, adapter)
       setStatus('streaming')
       if (isTutorDemo()) {
         setTutor({

@@ -90,7 +90,7 @@ mid-`printf` corrupts a JSON line and desyncs the browser's parser. State is
 conveyed through the JSON itself (`temp: null`, `ax: null`, `ok: false`). Do not
 re-enable logs on UART0.
 
-**`SCAN` needs a 20 s timeout.** The board sweeps I2C `0x03..0x77` (117
+**`SCAN` needs a 20 s timeout.** The board sweeps I2C `0x08..0x77` (112
 addresses); on an empty bus that takes ~12 s. That budget now lives on the
 adapter as `scanTimeoutMs: 20000` — do not fall back to `command()`'s 5 s
 default for a scan.
@@ -140,6 +140,7 @@ There's no current sensor in the kit; don't build toward one.
 | `IDENT` | `{"device","fw","board","id"}` — id is `TL-` + 6 hex from MAC |
 | `SCAN` | `{"i2c":[{"addr"}],"dht22":{"gpio","ok"},"bus":{...}}` — raw ACK'd addresses only, **no part name**: identity is the browser's job (fw 1.1) |
 | `WHOAMI <addr> <reg>` | `{"whoami":<int>}`, or `-1` if the address did not answer. The browser supplies the register from `components.json`, so firmware holds no per-sensor knowledge |
+| `READ <addr> <reg> <len>` | `{"read":[<byte>,...]}` or `{"read":null}`; `len` 1..16 (fw 1.3). The browser polls it from a part's `readRegs` in `components.json`, only for a chip whose WHOAMI matched, and never for a field the stream already carries |
 | `STREAM on` / `off` | ack, then ~10 Hz `{"ts","temp","hum","ax","ay","az"}` |
 | `PING` | `{"pong":true}` |
 | `DIAG` | pull-up state, per-address probe, MPU register readbacks |
@@ -198,6 +199,15 @@ Playwright MCP server is configured with `--browser msedge` and
   and holds only per-plan SDD artifacts: `plan-path`, `progress.md`, task briefs,
   review diffs. Never put a spec there; it will not be committed.)
 
+- **The bundled node firmware is still maintained, and it conflicts with the
+  proposed spec above.** The owner chose (2026-11-06) to add `READ` and
+  registry-driven polling to it, although the spec's §0.1, §4.1 and §7 say
+  OmniTwin needs no firmware and has no write verbs. That applies to the bundled
+  node only: nothing here reaches a student's own board. The conflict is flagged
+  in `docs/audit-hardware-detection.md` §1 and the spec has not been revised.
+- **An I2C address is never identity.** `resolveScanEntry` and `findingsToLayout`
+  have no address-only path, and the firmware writes to an MPU only after WHO_AM_I
+  reads `0x68`. A DS3231 RTC also sits at `0x68`. Do not add a fallback back.
 - **A USB bridge enumerating proves nothing about the target.** The CP210x on a
   flight controller appears off USB power alone while the STM32 stays dark, so
   a "connected" port can sit over a dead board. Any "is it live?" logic must

@@ -32,7 +32,13 @@ const PATTERNS = {
   spiBegin: /SPI\.begin\s*\(\s*\)/g,
   // Servo attach
   servoAttach: /\.attach\s*\(\s*(\d+)\s*\)/g,
+  // Part-number-shaped words — MPU6050, MPU-6050, BMP280, DS3231 — anywhere in
+  // the source, including Adafruit_MPU6050. Corroborates an I2C address.
+  partName: /(?<![A-Za-z])([A-Za-z]{2,}[-_]?\d{2,})/g,
 }
+
+// "MPU-6050" / "mpu_6050" / "MPU6050" -> "mpu6050", the registry id shape.
+const normPart = (s) => s.toLowerCase().replace(/[-_]/g, '')
 
 const LIBRARY_HINTS = {
   'Wire.h': { bus: 'i2c', note: 'I2C library included' },
@@ -60,6 +66,7 @@ function parseSource(source, filename = '') {
     libraries: [],
     serial: { baud: null, prints: [] },
     defines: new Map(),
+    partNames: [],
     confidence: 'weak', // overall: 'strong' | 'weak' | 'none'
     sourceFile: filename,
   }
@@ -195,6 +202,11 @@ function parseSource(source, filename = '') {
     }
   }
 
+  while ((match = PATTERNS.partName.exec(source))) {
+    const name = normPart(match[1])
+    if (!findings.partNames.includes(name)) findings.partNames.push(name)
+  }
+
   // Serial.begin
   const serialMatch = PATTERNS.serialBegin.exec(source)
   if (serialMatch) {
@@ -232,6 +244,7 @@ export function parseProject(files) {
     pins: [],
     libraries: [],
     serial: { baud: null, prints: [] },
+    partNames: [],
     confidence: 'none',
     files: allFindings,
   }
@@ -277,6 +290,10 @@ export function parseProject(files) {
     for (const l of f.libraries) {
       if (!merged.libraries.some(m => m.name === l.name)) merged.libraries.push(l)
     }
+    // Part names: union, so a name in a header corroborates an address in main.c
+    for (const n of f.partNames) {
+      if (!merged.partNames.includes(n)) merged.partNames.push(n)
+    }
 
     // Serial
     if (f.serial.baud && !merged.serial.baud) merged.serial.baud = f.serial.baud
@@ -316,11 +333,15 @@ export function findingsToLayout(findings, registry) {
     }
   }
 
-  // I2C sensors from addresses + libraries
+  // I2C sensors from addresses, CORROBORATED by the source naming the part. An
+  // address alone is not identity: a DS3231 RTC also lives at 0x68, and an RTC
+  // sketch used to draw an MPU6050 at "strong". Same rule as resolveScanEntry.
+  const named = (id) => (findings.partNames ?? []).includes(id) ||
+    findings.libraries.some(l => l.sensor === id)
   const placedI2cTypes = new Set()
   const i2cByAddress = new Map()
   for (const addr of findings.i2c.addresses) {
-    const sensor = registry.allComponents().find(c => c.candidateAddrs?.includes(addr))
+    const sensor = registry.allComponents().find(c => c.candidateAddrs?.includes(addr) && named(c.id))
     if (!sensor || !registry.isKnown(sensor.id)) continue
     let placed = components.find(c => c.type === sensor.id)
     if (!placed && !placedI2cTypes.has(sensor.id)) {

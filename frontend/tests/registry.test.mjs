@@ -2,8 +2,67 @@ import test from 'node:test'
 import assert from 'node:assert'
 import {
   REGISTRY, allComponents, componentDef, isKnown,
-  resolveScanEntry, pinDef, whoamiRequests,
+  resolveScanEntry, pinDef, whoamiRequests, unidentifiedAddrs, readPlan, decodeRead,
 } from '../src/registry/registry.mjs'
+
+const BARO = { id: 'baro', readRegs: [{ reg: '0xF7', len: 2, signed: false, scale: 0.5, fields: ['pressure'] }] }
+
+test('readPlan polls a WHOAMI-identified part from its readRegs', () => {
+  const plan = readPlan({ i2c: [{ addr: 118, whoami: 0x58 }] }, [], () => BARO)
+  assert.deepEqual(plan, [{ addr: 118, reg: 0xF7, spec: BARO.readRegs[0] }])
+})
+
+test('readPlan never polls a chip that did not identify itself', () => {
+  for (const e of [{ addr: 118 }, { addr: 118, whoami: null }, { addr: 118, name: 'baro' }])
+    assert.deepEqual(readPlan({ i2c: [e] }, [], () => BARO), [], JSON.stringify(e))
+  assert.deepEqual(readPlan({ i2c: [{ addr: 104, whoami: 0x58 }] }), [])   // wrong byte: real resolver
+})
+
+test('readPlan skips fields the firmware stream owns, so the MPU stays on its stream path', () => {
+  const scan = { i2c: [{ addr: 104, whoami: 0x68 }] }
+  assert.equal(readPlan(scan).length, 1)
+  assert.deepEqual(readPlan(scan, ['ax', 'ay', 'az']), [])
+})
+
+test('readPlan polls a part once when it ACKs at two addresses', () => {
+  assert.equal(readPlan({ i2c: [{ addr: 104, whoami: 0x68 }, { addr: 105, whoami: 0x68 }] }).length, 1)
+})
+
+test('decodeRead reads big-endian, applies sign and scale', () => {
+  const mpu = componentDef('mpu6050').readRegs[0]
+  // +4096 LSB, -4096 LSB, 0 at +-8g: exactly +1 g, -1 g, 0 g.
+  assert.deepEqual(decodeRead(mpu, [0x10, 0x00, 0xF0, 0x00, 0x00, 0x00]), { ax: 1, ay: -1, az: 0 })
+  assert.deepEqual(decodeRead(BARO.readRegs[0], [0xFF, 0xFE]), { pressure: 65534 * 0.5 })   // unsigned
+})
+
+test('decodeRead gives nulls, never a fake 0, for a failed or short read', () => {
+  const mpu = componentDef('mpu6050').readRegs[0]
+  const nulls = { ax: null, ay: null, az: null }
+  assert.deepEqual(decodeRead(mpu, null), nulls)
+  assert.deepEqual(decodeRead(mpu, [1, 2]), nulls)
+})
+
+test('every readRegs spec fits READ and splits evenly across its fields', () => {
+  for (const def of REGISTRY.i2c) {
+    for (const s of def.readRegs ?? []) {
+      assert.match(s.reg, /^0x[0-9a-fA-F]{1,2}$/, def.id)
+      assert.ok(s.len >= 1 && s.len <= 16, def.id)
+      assert.ok(Number.isInteger(s.len / s.fields.length), def.id)
+      assert.ok(s.fields.every(f => def.reads.includes(f)), `${def.id}: every field is in reads`)
+    }
+  }
+})
+
+test('an entry without readRegs is simply not polled (backward compatible)', () => {
+  const plain = { id: 'plain' }
+  assert.deepEqual(readPlan({ i2c: [{ addr: 72, whoami: 1 }] }, [], () => plain), [])
+})
+
+test('no WHOAMI means no part: address alone is not identity', () => {
+  assert.equal(resolveScanEntry({ addr: 104 }), null)
+  assert.equal(resolveScanEntry({ addr: 104, whoami: null }), null)
+  assert.deepEqual(unidentifiedAddrs({ i2c: [{ addr: 104 }, { addr: 104 }, { addr: 72 }, { addr: 105, whoami: 0x68 }] }), [104, 72])
+})
 
 test("registry seeds exactly today's four parts", () => {
   assert.deepEqual(allComponents().map(c => c.id).sort(), ['breadboard', 'dht22', 'esp32', 'mpu6050'])
@@ -50,9 +109,9 @@ test('an explicit name:null means the board could not identify it — no compone
   assert.equal(resolveScanEntry({ addr: 72, name: null }), null)
 })
 
-test('resolveScanEntry falls back to the legacy firmware name, then the address', () => {
+test('resolveScanEntry honours a legacy firmware name when WHOAMI is unavailable', () => {
   assert.equal(resolveScanEntry({ addr: 104, name: 'mpu6050' })?.id, 'mpu6050')
-  assert.equal(resolveScanEntry({ addr: 105 })?.id, 'mpu6050')
+  assert.equal(resolveScanEntry({ addr: 104, whoami: null, name: 'mpu6050' })?.id, 'mpu6050')
 })
 
 test('resolveScanEntry returns null for an unknown address — no phantom component', () => {

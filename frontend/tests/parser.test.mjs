@@ -5,6 +5,7 @@ import { allComponents, componentDef, isKnown } from '../src/registry/registry.m
 
 test('parses ESP-IDF bus pins, hex I2C addresses, and custom DHT22 GPIO', () => {
   const source = `
+/* OmniTwin node: ESP32 + MPU6050 + DHT22 */
 #define SDA_IO 21
 #define SCL_IO 22
 #define MPU_ADDR 0x68
@@ -35,8 +36,26 @@ static bool dht_decode(const uint8_t data[5]) { return true; }
   assert.ok(layout.components.some(c => c.type === 'breadboard'))
 })
 
+const canvasTypes = (files) =>
+  findingsToLayout(parseProject(files), { allComponents, componentDef, isKnown }).components.map(c => c.type)
+
+test('an address alone draws no part: a DS3231 at 0x68 is not an MPU6050', () => {
+  const content = '#include <Wire.h>\n#include <RTClib.h>\nRTC_DS3231 rtc;\n#define RTC_ADDR 0x68\nvoid setup(){Wire.begin(21,22);Wire.beginTransmission(RTC_ADDR);}'
+  const types = canvasTypes([{ name: 'a.ino', content }])
+  assert.ok(!types.includes('mpu6050'))
+  assert.deepEqual(parseProject([{ name: 'a.ino', content }]).i2c.addresses, [0x68])   // still reported
+})
+
+test('an address plus the part named anywhere in the project draws it', () => {
+  const addr = 'void setup(){Wire.begin(21,22);Wire.beginTransmission(0x68);}'
+  for (const named of ['#include <MPU6050.h>', '#include <Adafruit_MPU6050.h>', '// MPU-6050 on the bus', '// mpu_6050'])
+    assert.ok(canvasTypes([{ name: 'a.ino', content: `${named}\n${addr}` }]).includes('mpu6050'), named)
+  assert.ok(canvasTypes([{ name: 'imu.h', content: '// MPU6050' }, { name: 'a.ino', content: addr }]).includes('mpu6050'))
+})
+
 test('projects source-derived sensor connections onto declared GPIO pins', () => {
   const source = `
+/* OmniTwin node: ESP32 + MPU6050 + DHT22 */
 #define SDA_IO 13
 #define SCL_IO 14
 #define MPU_ADDR 0x68

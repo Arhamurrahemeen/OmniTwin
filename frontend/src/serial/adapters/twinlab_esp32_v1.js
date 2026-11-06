@@ -13,7 +13,7 @@ export default {
   identCommand: 'IDENT',
   identTimeoutMs: 2000,
   pingCommand: 'PING',
-  // The bus sweep is 117 addresses; ~12s on an empty bus. Never the 5s default.
+  // The bus sweep is 112 addresses; ~12s on an empty bus. Never the 5s default.
   scanCommand: 'SCAN',
   scanTimeoutMs: 20000,
   streamOnCommand: 'STREAM on',
@@ -38,6 +38,18 @@ export default {
   // -1 (or a missing field, e.g. a 1.0 board replying "unknown command") means
   // no answer, which leaves the address fallback in play.
   parseIdentity: (o) => (typeof o?.whoami === 'number' && o.whoami >= 0 ? o.whoami : null),
+
+  // READ arrived in fw 1.3. Older boards and the Arduino sketch (1.1) lack it, and
+  // the sketch does not answer unknown commands, so asking would only time out.
+  supportsRead: (info) => Number(info?.fw) >= 1.3,
+  readCommand: (addr, reg, len) => `READ ${addr} ${reg} ${len}`,
+  readTimeoutMs: 500,
+  parseRead: (o) => (Array.isArray(o?.read) ? o.read : null),
+
+  // What toReading fills from the stream. Never polled as well: the firmware has
+  // configured those chips, and polling an MPU it failed to wake would read a
+  // confident 0.000 g where the stream correctly says null.
+  streamKeys: ['temp', 'hum', 'vib', 'ax', 'ay', 'az'],
 
   isReading: (o) => typeof o?.ts === 'number',
 
