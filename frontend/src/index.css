@@ -11,8 +11,8 @@ html, body, #root {
 
 body {
   font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
-  background: #F1EFE8;
-  color: #04342C;
+  background: #070a12;
+  color: #f1f5f9;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-size: 14px;

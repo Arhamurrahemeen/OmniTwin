@@ -91,6 +91,10 @@ export class SerialSession {
     }
   }
 
+  // The next reply is wanted even though the last command timed out. Only for a
+  // retry of the same command, where a late answer is still the right answer.
+  forgetStale() { this._discardOne = false }
+
   async close() {
     try { await this.writer?.close() } catch {}
     try { await this.reader?.cancel() } catch {}

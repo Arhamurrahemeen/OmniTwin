@@ -12,6 +12,7 @@ export default {
 
   identCommand: 'IDENT',
   identTimeoutMs: 2000,
+  identAttempts: 3,   // opening the port resets an ESP32; the first IDENT is lost to boot
   pingCommand: 'PING',
   // The bus sweep is 112 addresses; ~12s on an empty bus. Never the 5s default.
   scanCommand: 'SCAN',
@@ -27,6 +28,10 @@ export default {
     { from: ['esp32', 'SDA'], to: ['mpu6050', 'SDA'] },
     { from: ['esp32', 'SCL'], to: ['mpu6050', 'SCL'] },
     { from: ['esp32', 'DHT'], to: ['dht22', 'DATA'] },
+    { from: ['esp32', '3V3'], to: ['mpu6050', 'VCC'] },
+    { from: ['esp32', 'GND'], to: ['mpu6050', 'GND'] },
+    { from: ['esp32', '3V3'], to: ['dht22', 'VCC'] },
+    { from: ['esp32', 'GND'], to: ['dht22', 'GND'] },
   ],
 
   parseIdent: (o) => (o && o.id && o.board

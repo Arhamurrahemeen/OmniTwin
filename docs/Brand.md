@@ -60,6 +60,8 @@ No icon/symbol currently exists. A wordmark alone does not scale down to a 16–
 
 **Note on green choice:** deliberately shifted away from Arduino's exact teal (`#00878F`-ish family) — close enough to signal "hardware/maker" by association, distinct enough to not read as an Arduino reskin. Confirmed: Arduino's own brand identity is built around a specific proprietary teal shade, so straight teal was avoided.
 
+**Dashboard theme (Arham, 2026-11-06):** the product dashboard uses a dark navy and cyan theme (`frontend/src/App.css`), chosen over the palette above. This table still governs the wordmark and university-facing material.
+
 **Note on the two wire-kind colours:** red and slate are functional signals in the canvas (power vs ground), not brand accents. They are deliberately outside the core palette so nobody mistakes a wire for a brand element, and they must never appear in the wordmark or university-facing material.
 
 ## 4. Typography

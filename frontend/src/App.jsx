@@ -17,6 +17,15 @@ import './App.css'
 
 const CTX_DEVICE_ID = 'local'
 
+const STATUS_TEXT = {
+  needPort: () => 'Not connected',
+  connecting: () => 'Connecting…',
+  scanning: () => 'Scanning…',
+  streaming: (d) => `${d?.id ?? 'Board'} live`,
+  manual: () => 'No firmware found',
+  error: () => 'Connection lost',
+}
+
 // Stable registry surface for CodeTab. Passed as an inline object literal this
 // was a NEW identity on every App render, and CodeTab's parse effect depends on
 // it — so the effect re-ran, called back into App state, re-rendered App, and
@@ -45,6 +54,8 @@ export default function App() {
   const [codeFindings, setCodeFindings] = useState(null)
   const [codeFlagsList, setCodeFlagsList] = useState([])
   const [declaredComponents, setDeclaredComponents] = useState([])
+  const [codeOpen, setCodeOpen] = useState(false)
+  const codeRef = useRef(null)
   const sessionRef = useRef(null)
   const pollPlan = useRef([])
   const polled = useRef({})                     // latest READ-polled values
@@ -234,94 +245,69 @@ export default function App() {
   useEffect(() => () => { sessionRef.current?.close() }, [])
 
   const hasDeclared = declaredComponents.length > 0
+  const live_ = status === 'streaming'
+
+  const toggleCode = async () => {
+    if (codeOpen) { setCodeOpen(false); return }
+    if (codeRef.current?.hasFolder() || await codeRef.current?.pick()) setCodeOpen(true)
+  }
 
   return (
     <div className="app">
       <header className="navbar">
-        <div className="navbar-brand">
-          <img className="navbar-wordmark" src={wordmark} alt="OmniTwin" />
-        </div>
-        <span className="navbar-sep" />
-        <span className="navbar-sub">Digital twin learning lab</span>
-        <div className="navbar-right">
-          <span className={`status-dot ${status === 'streaming' ? 'status-dot--live' : 'status-dot--off'}`} />
-          <span className={`status-label ${status === 'streaming' ? '' : 'status-label--off'}`}>
-            {status}
-          </span>
-        </div>
+        <img className="navbar-wordmark" src={wordmark} alt="OmniTwin" />
+        <span className="status-pill" title={device ? `${device.board} · fw ${device.fw}` : undefined}>
+          <span className={`status-dot ${live_ ? '' : 'status-dot--off'}`} />
+          {STATUS_TEXT[status]?.(device) ?? status}
+        </span>
+        <button className="btn-quiet" onClick={toggleCode}>{codeOpen ? 'Close code' : 'Open code'}</button>
       </header>
 
-      {hasDeclared && (
-        <div className="declared-banner">
-          <span>⚠️ Hardware derived from your source code — <strong>confirm it matches your board</strong></span>
-          <button onClick={() => setDeclaredComponents([])}>Dismiss</button>
-        </div>
-      )}
-
       <div className="workspace">
-        {/* LEFT: Code tab - 25% width */}
-        <aside className="code-sidebar-full">
-          <CodeTab 
-            onProjectParsed={onProjectParsed} 
-            onLayoutGenerated={onLayoutGenerated} 
-            registry={REGISTRY_API}
-          />
-        </aside>
-
-        {/* MIDDLE: Canvas area - 50% width */}
-        <main className="charts-area">
+        <main className="canvas-area">
+          {hasDeclared && (
+            <div className="declared-banner">
+              <span>Hardware derived from your source code. <strong>Confirm it matches your board.</strong></span>
+              <button onClick={() => setDeclaredComponents([])}>Dismiss</button>
+            </div>
+          )}
           {status === 'needPort' || status === 'error' ? (
-            <div className="empty-state">
-              <p>No board connected.</p>
-              <button className="btn-primary" onClick={connect} disabled={status === 'connecting'}>
-                {supportsSerial() ? 'Connect your microcontroller' : 'Web Serial unsupported — use Chrome or Edge'}
+            <div className="connect-state">
+              <button className="btn-primary" onClick={connect}>
+                {supportsSerial() ? 'Connect your board' : 'Web Serial unsupported — use Chrome or Edge'}
               </button>
               {status === 'error' && (<>
                 <p className="tutor-error">Check the cable and try again.</p>
-                {tutor?.error && <p className="tutor-error" style={{ fontSize: 10 }}>{tutor.error}</p>}
+                {tutor?.error && <p className="tutor-error">{tutor.error}</p>}
               </>)}
             </div>
           ) : (
             <>
-              {device && (
-                <div className="charts-header">
-                  <span className="charts-device-name">{device.id}</span>
-                  <span className="charts-device-location">{device.board} · fw {device.fw}</span>
-                  <button
-                    className="btn-secondary rescan-btn"
-                    onClick={rescan}
-                    disabled={status === 'scanning'}
-                    title="Re-run the I2C bus sweep to pick up a sensor you just clipped on"
-                  >
-                    {status === 'scanning' ? 'Scanning…' : '⟳ Rescan'}
-                  </button>
+              {noFirmware && (
+                <div className="declared-banner">
+                  <span>No OmniTwin firmware answered on this port. Add parts by hand, or flash the node firmware and reconnect.</span>
+                  <button onClick={connect}>Retry</button>
                 </div>
               )}
-              {noFirmware && (
-                <p className="empty-state" style={{ fontSize: 11 }}>
-                  No OmniTwin firmware answered on this port. Add components by hand below, or
-                  flash the node firmware and reconnect.
-                  <button onClick={connect} className="btn-secondary" style={{ marginLeft: 8 }}>
-                    Retry connection
-                  </button>
-                </p>
-              )}
-              <TwinCanvas layout={layout} live={live} sensorFlags={partFaults(sensorFlags)}
+              <TwinCanvas layout={layout} live={live}
                 onMove={(id, x, y) => setLayout(l => moveComponent(l, id, x, y))}
                 onAdd={(type) => setLayout(l => addComponent(l, type))}
                 onWire={(fc, fp, tc, tp) => setLayout(l => addWire(l, fc, fp, tc, tp))}
                 onUnwire={(wid) => setLayout(l => removeWire(l, wid))}
-                onRemove={(id) => setLayout(l => removeComponent(l, id))} scanInfo={scanInfo} />
+                onRemove={(id) => setLayout(l => removeComponent(l, id))}
+                onRescan={rescan} scanning={status === 'scanning'} scanInfo={scanInfo} />
             </>
           )}
         </main>
 
-        {/* RIGHT: AI Tutor - 25% width */}
-        <aside className="tutor-sidebar-full">
-          <TutorPanel context={context()} onSubmit={askTutorFlow} replyState={tutor}
-            initialThread={isTutorDemo() ? [{ role: 'user', content: 'Why does the vibration flag keep turning on?' }] : []} />
-        </aside>
+        <TutorPanel onSubmit={askTutorFlow} replyState={tutor} flags={partFaults(sensorFlags)}
+          initialThread={isTutorDemo() ? [{ role: 'user', content: 'Why does the vibration flag keep turning on?' }] : []} />
       </div>
+
+      {/* Always mounted: closing the drawer must not lose the folder or its parse. */}
+      <aside className={`code-drawer ${codeOpen ? 'code-drawer--open' : ''}`} aria-hidden={!codeOpen}>
+        <CodeTab ref={codeRef} onProjectParsed={onProjectParsed} onLayoutGenerated={onLayoutGenerated} registry={REGISTRY_API} />
+      </aside>
     </div>
   )
 }

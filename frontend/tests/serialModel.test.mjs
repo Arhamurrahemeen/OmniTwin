@@ -4,7 +4,7 @@ import {
   readLine, parseScan, scanToComponents, defaultLayout,
   addComponent, removeComponent, moveComponent, addWire, removeWire, pinDef, pinPos, wiresFor, mergeDeclaredLayout,
   wiringFlags, wiringFaults, wireStroke, referenceGhosts,
-  anomalyFlags, notReporting, partFaults, withTimeout, scanNotice,
+  anomalyFlags, notReporting, partFaults, withTimeout, scanNotice, wireRoute, limitNote, componentDef,
 } from '../src/serial/serialModel.mjs'
 
 test('readLine reassembles a line split across chunks', () => {
@@ -38,20 +38,20 @@ test('parseScan accepts an already-parsed reply as well as a raw line', () => {
   assert.deepEqual(parseScan(obj), obj)
 })
 
-test('scanToComponents maps known addresses + ok dht + always ESP/breadboard', () => {
+test('scanToComponents maps known addresses + ok dht + always the ESP', () => {
   const s = parseScan('{"i2c":[{"addr":104,"name":"mpu6050"},{"addr":72,"name":null}],"dht22":{"gpio":4,"ok":true}}')
   const comps = scanToComponents(s)
   const types = comps.map(c => c.type)
   assert.ok(types.includes('esp32'))
-  assert.ok(types.includes('breadboard'))
+  assert.ok(!types.includes('breadboard'), 'added by hand only')
   assert.ok(types.includes('mpu6050'))
   assert.ok(types.includes('dht22'))
 })
 
-test('scanToComponents on an empty bus still yields ESP + breadboard', () => {
+test('scanToComponents on an empty bus still yields the ESP', () => {
   const s = parseScan('{"i2c":[],"dht22":{"gpio":4,"ok":false}}')
   const types = scanToComponents(s).map(c => c.type)
-  assert.deepEqual([...types].sort(), ['breadboard', 'esp32'])
+  assert.deepEqual(types, ['esp32'])
 })
 
 test('scanToComponents maps an MPU at 0x69 (105) too', () => {
@@ -81,7 +81,7 @@ test('a raw 1.1 SCAN entry with no WHOAMI yet is unidentified, not an MPU6050', 
 test('scanToComponents ignores an address no registry entry claims', () => {
   const s = parseScan('{"i2c":[{"addr":72,"name":null}],"dht22":{"gpio":4,"ok":true}}')
   const types = scanToComponents(s).map(c => c.type)
-  assert.deepEqual(types.sort(), ['breadboard', 'dht22', 'esp32'])
+  assert.deepEqual(types.sort(), ['dht22', 'esp32'])
 })
 
 test('scanToComponents uses WHOAMI when the board supplies it', () => {
@@ -99,7 +99,7 @@ test('scanToComponents drops an MPU whose WHOAMI byte is wrong', () => {
 
 test('defaultLayout positions come from the registry, not a hardcoded table', () => {
   const l = defaultLayout([{ type: 'dht22' }])
-  assert.deepEqual({ x: l.components[0].x, y: l.components[0].y }, { x: 90, y: 90 })
+  assert.deepEqual({ x: l.components[0].x, y: l.components[0].y }, componentDef('dht22').defaultPos)
 })
 
 test('addComponent rejects an id the registry does not define', () => {
@@ -200,7 +200,7 @@ test('declared layout merges alternate GPIO pins and source wires without losing
 test('pinPos offsets by the registry pin dx/dy, and is 0,0 when the pin is unknown', () => {
   const l = defaultLayout([{ type: 'mpu6050' }])
   const mpu = l.components[0]
-  assert.deepEqual(pinPos(mpu, 'SDA'), { x: mpu.x + 58, y: mpu.y + 10 })
+  assert.deepEqual(pinPos(mpu, 'SDA'), { x: mpu.x + 0, y: mpu.y + 124 })
   assert.deepEqual(pinPos(mpu, 'NOPE'), { x: 0, y: 0 })
   // A component whose type the registry does not define has no pins to offset by.
   assert.deepEqual(pinPos({ id: 'x1', type: 'nonexistent', x: 5, y: 5 }, 'SDA'), { x: 0, y: 0 })
@@ -280,10 +280,10 @@ test('wiringFlags skips a wire whose component is not on the canvas', () => {
   assert.deepEqual(wiringFlags(w.wires, [{ ...esp, type: 'esp32' }]), [])   // mpu absent
 })
 
-test('wireStroke colors power red-solid, ground gray-solid, signal green-dashed', () => {
+test('wireStroke gives each kind its own solid colour (dashes mean expected wiring)', () => {
   assert.equal(wireStroke('power').dash, null)
   assert.equal(wireStroke('ground').dash, null)
-  assert.equal(wireStroke('signal').dash, '6 4')
+  assert.equal(wireStroke('signal').dash, null)
   assert.notEqual(wireStroke('power').stroke, wireStroke('signal').stroke)
   assert.notEqual(wireStroke('ground').stroke, wireStroke('signal').stroke)
   // An unknown kind falls back to the signal style rather than disappearing.
@@ -295,15 +295,41 @@ test('referenceGhosts resolves the adapter wiring and skips parts that are not p
   const l = defaultLayout([{ type: 'esp32' }, { type: 'mpu6050' }])
   const [esp, mpu] = l.components
   const ghosts = referenceGhosts(l, ADAPTER.referenceWiring)
-  // SDA and SCL both resolve; the DHT->DATA pair is skipped because dht22 is not placed.
-  assert.equal(ghosts.length, 2)
-  assert.deepEqual(ghosts[0].from, { x: esp.x + 60, y: esp.y + 6 })
-  assert.deepEqual(ghosts[0].to, { x: mpu.x + 58, y: mpu.y + 10 })
+  // SDA, SCL, 3V3 and GND to the MPU resolve; every dht22 pair is skipped because it is not placed.
+  assert.equal(ghosts.length, 4)
+  assert.deepEqual(ghosts[0].from, { x: esp.x + 226, y: esp.y + 236 })
+  assert.deepEqual(ghosts[0].to, { x: mpu.x, y: mpu.y + 124 })
+  assert.equal(ghosts[0].kind, 'signal')
+})
+
+test('referenceGhosts drops a pair once a real wire connects it', async () => {
+  const { default: ADAPTER } = await import('../src/serial/adapters/twinlab_esp32_v1.js')
+  const l = defaultLayout([{ type: 'esp32' }, { type: 'mpu6050' }])
+  const [esp, mpu] = l.components
+  const wired = addWire(l, esp.id, 'SDA', mpu.id, 'SDA')
+  assert.equal(referenceGhosts(wired, ADAPTER.referenceWiring).length, 3)
+})
+
+test('wireRoute takes a far-side board pin above the board, not through it', () => {
+  const l = defaultLayout([{ type: 'esp32' }, { type: 'mpu6050' }])
+  const [esp, mpu] = l.components
+  const clearY = esp.y - 22
+  assert.ok(wireRoute(esp, '3V3', mpu, 'VCC').includes(` ${clearY} `), 'routes over the top edge')
+  assert.equal(wireRoute(esp, '3V3', mpu, 'VCC'), wireRoute(mpu, 'VCC', esp, '3V3'), 'direction does not matter')
+  assert.ok(!wireRoute(esp, 'SDA', mpu, 'SDA').includes(` ${clearY} `), 'a near-side pin goes straight across')
+})
+
+test('limitNote names the limit a reading has crossed, and nothing else', () => {
+  assert.equal(limitNote('vib', 0.9), 'above the 0.2 limit')
+  assert.equal(limitNote('hum', 10), 'below the 20 limit')
+  assert.equal(limitNote('vib', 0.1), null)
+  assert.equal(limitNote('vib', null), null)
+  assert.equal(limitNote('pressure', 9000), null)
 })
 
 test('anomalyFlags flags NaN, out-of-range, frozen stream', () => {
   assert.deepEqual(anomalyFlags({ temp: NaN }), ['temperature reading is NaN'])
-  assert.deepEqual(anomalyFlags({ temp: 41.2, vib: 0.3 }), ['temperature above 40', 'vib above 0.2'])
+  assert.deepEqual(anomalyFlags({ temp: 41.2, vib: 0.3 }), ['temperature above 40', 'vibration above 0.2'])
   assert.deepEqual(anomalyFlags({}), ['no data yet'])
 })
 
@@ -379,7 +405,7 @@ test('removeComponent takes the part and every wire that touched it', () => {
   assert.equal(out.wires.length, 1, 'both MPU wires must be pruned')
   assert.equal(out.wires[0].toComponentId, dht.id, 'the DHT22 wire must survive')
   assert.deepEqual(wiringFlags(out.wires, out.components), [])
-  assert.deepEqual(pinPos(out.components[1], 'VCC'), { x: dht.x + 20, y: dht.y + 18 })
+  assert.deepEqual(pinPos(out.components[1], 'VCC'), { x: dht.x + 0, y: dht.y + 56 })
 })
 
 test('removeComponent ignores an id that is not on the canvas', () => {

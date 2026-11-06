@@ -1,22 +1,79 @@
 {
-  "$comment": "Single source of truth for component identity, sprite geometry, and pin kinds. Adding an I2C sensor = an entry here, no firmware or JS change for identity (whoamiReg/whoamiVal: hex strings matching the WHOAMI <addr> <reg> reply) and, with optional readRegs, for data. readRegs = [{reg: hex string, len: 1..16 bytes, signed: bool, scale: multiplier, fields: reading names}]; len is split evenly across fields, each big-endian. Polling only reads: a chip that must be configured before it converts cannot stream this way. kind drives wire color and the wiring-correctness check.",
+  "$comment": "Single source of truth for component identity, sprite geometry, and pin kinds. Adding an I2C sensor = an entry here, no firmware or JS change for identity (whoamiReg/whoamiVal: hex strings matching the WHOAMI <addr> <reg> reply) and, with optional readRegs, for data. readRegs = [{reg: hex string, len: 1..16 bytes, signed: bool, scale: multiplier, fields: reading names}]; len is split evenly across fields, each big-endian. Polling only reads: a chip that must be configured before it converts cannot stream this way. kind drives wire color and the wiring-correctness check. Optional display = which readings a part card shows ({key, label, unit, decimals, ring: {max}}); without it the card lists reads. esp32.header = the real pin rows drawn on the board, [label, gpio]. autoPlace:false = only added by hand.",
   "i2c": [
     {
       "id": "mpu6050",
       "label": "MPU6050",
-      "candidateAddrs": [104, 105],
+      "candidateAddrs": [
+        104,
+        105
+      ],
       "whoamiReg": "0x75",
       "whoamiVal": "0x68",
-      "reads": ["ax", "ay", "az"],
+      "reads": [
+        "ax",
+        "ay",
+        "az"
+      ],
       "$readRegs": "1/4096 per LSB = the +-8g range the node firmware configures. Not polled on that firmware: its stream already owns these fields (adapter.streamKeys).",
-      "readRegs": [{ "reg": "0x3B", "len": 6, "signed": true, "scale": 0.000244140625, "fields": ["ax", "ay", "az"] }],
-      "size": { "w": 70, "h": 70 },
-      "defaultPos": { "x": 320, "y": 90 },
+      "readRegs": [
+        {
+          "reg": "0x3B",
+          "len": 6,
+          "signed": true,
+          "scale": 0.000244140625,
+          "fields": [
+            "ax",
+            "ay",
+            "az"
+          ]
+        }
+      ],
+      "size": {
+        "w": 270,
+        "h": 170
+      },
+      "defaultPos": {
+        "x": 470,
+        "y": 44
+      },
       "pins": [
-        { "id": "VCC", "label": "VCC", "kind": "power", "dx": 12, "dy": 10 },
-        { "id": "GND", "label": "GND", "kind": "ground", "dx": 12, "dy": 60 },
-        { "id": "SDA", "label": "SDA", "kind": "signal", "dx": 58, "dy": 10 },
-        { "id": "SCL", "label": "SCL", "kind": "signal", "dx": 58, "dy": 60 }
+        {
+          "id": "VCC",
+          "label": "VCC",
+          "kind": "power",
+          "dx": 0,
+          "dy": 40
+        },
+        {
+          "id": "GND",
+          "label": "GND",
+          "kind": "ground",
+          "dx": 0,
+          "dy": 68
+        },
+        {
+          "id": "SCL",
+          "label": "SCL",
+          "kind": "signal",
+          "dx": 0,
+          "dy": 96
+        },
+        {
+          "id": "SDA",
+          "label": "SDA",
+          "kind": "signal",
+          "dx": 0,
+          "dy": 124
+        }
+      ],
+      "display": [
+        {
+          "key": "vib",
+          "label": "Vibration",
+          "unit": "g",
+          "decimals": 2
+        }
       ]
     }
   ],
@@ -24,13 +81,60 @@
     {
       "id": "dht22",
       "label": "DHT22",
-      "reads": ["temp", "hum"],
-      "size": { "w": 70, "h": 70 },
-      "defaultPos": { "x": 90, "y": 90 },
+      "reads": [
+        "temp",
+        "hum"
+      ],
+      "size": {
+        "w": 270,
+        "h": 200
+      },
+      "defaultPos": {
+        "x": 470,
+        "y": 280
+      },
       "pins": [
-        { "id": "VCC", "label": "VCC", "kind": "power", "dx": 20, "dy": 18 },
-        { "id": "GND", "label": "GND", "kind": "ground", "dx": 20, "dy": 52 },
-        { "id": "DATA", "label": "DATA", "kind": "signal", "dx": 52, "dy": 35 }
+        {
+          "id": "VCC",
+          "label": "VCC",
+          "kind": "power",
+          "dx": 0,
+          "dy": 56
+        },
+        {
+          "id": "DATA",
+          "label": "DATA",
+          "kind": "signal",
+          "dx": 0,
+          "dy": 100
+        },
+        {
+          "id": "GND",
+          "label": "GND",
+          "kind": "ground",
+          "dx": 0,
+          "dy": 144
+        }
+      ],
+      "display": [
+        {
+          "key": "temp",
+          "label": "Temperature",
+          "unit": "°C",
+          "decimals": 1,
+          "ring": {
+            "max": 50
+          }
+        },
+        {
+          "key": "hum",
+          "label": "Humidity",
+          "unit": "%",
+          "decimals": 0,
+          "ring": {
+            "max": 100
+          }
+        }
       ]
     }
   ],
@@ -38,26 +142,214 @@
     {
       "id": "esp32",
       "label": "ESP32",
-      "size": { "w": 120, "h": 90 },
-      "defaultPos": { "x": 120, "y": 300 },
+      "size": {
+        "w": 240,
+        "h": 490
+      },
+      "defaultPos": {
+        "x": 60,
+        "y": 44
+      },
       "pins": [
-        { "id": "3V3", "label": "3V3", "kind": "power", "dx": 20, "dy": 6 },
-        { "id": "GND", "label": "GND", "kind": "ground", "dx": 20, "dy": 84 },
-        { "id": "SDA", "label": "SDA (GPIO21)", "kind": "signal", "dx": 60, "dy": 6, "gpio": 21 },
-        { "id": "SCL", "label": "SCL (GPIO22)", "kind": "signal", "dx": 60, "dy": 84, "gpio": 22 },
-        { "id": "DHT", "label": "GPIO4", "kind": "signal", "dx": 100, "dy": 6, "gpio": 4 }
-      ]
+        {
+          "id": "3V3",
+          "label": "3V3",
+          "kind": "power",
+          "dx": 14,
+          "dy": 74
+        },
+        {
+          "id": "GND",
+          "label": "GND",
+          "kind": "ground",
+          "dx": 226,
+          "dy": 101
+        },
+        {
+          "id": "SDA",
+          "label": "SDA (GPIO21)",
+          "kind": "signal",
+          "dx": 226,
+          "dy": 236,
+          "gpio": 21
+        },
+        {
+          "id": "SCL",
+          "label": "SCL (GPIO22)",
+          "kind": "signal",
+          "dx": 226,
+          "dy": 155,
+          "gpio": 22
+        },
+        {
+          "id": "DHT",
+          "label": "GPIO4",
+          "kind": "signal",
+          "dx": 226,
+          "dy": 398,
+          "gpio": 4
+        }
+      ],
+      "header": {
+        "leftDx": 14,
+        "rightDx": 226,
+        "firstDy": 74,
+        "rowGap": 27,
+        "left": [
+          [
+            "3V3",
+            null
+          ],
+          [
+            "EN",
+            null
+          ],
+          [
+            "VP",
+            36
+          ],
+          [
+            "VN",
+            39
+          ],
+          [
+            "D34",
+            34
+          ],
+          [
+            "D35",
+            35
+          ],
+          [
+            "D32",
+            32
+          ],
+          [
+            "D33",
+            33
+          ],
+          [
+            "D25",
+            25
+          ],
+          [
+            "D26",
+            26
+          ],
+          [
+            "D27",
+            27
+          ],
+          [
+            "D14",
+            14
+          ],
+          [
+            "D12",
+            12
+          ],
+          [
+            "GND",
+            null
+          ],
+          [
+            "D13",
+            13
+          ]
+        ],
+        "right": [
+          [
+            "VIN",
+            null
+          ],
+          [
+            "GND",
+            null
+          ],
+          [
+            "D23",
+            23
+          ],
+          [
+            "D22",
+            22
+          ],
+          [
+            "TX0",
+            1
+          ],
+          [
+            "RX0",
+            3
+          ],
+          [
+            "D21",
+            21
+          ],
+          [
+            "D19",
+            19
+          ],
+          [
+            "D18",
+            18
+          ],
+          [
+            "D5",
+            5
+          ],
+          [
+            "TX2",
+            17
+          ],
+          [
+            "RX2",
+            16
+          ],
+          [
+            "D4",
+            4
+          ],
+          [
+            "D2",
+            2
+          ],
+          [
+            "D15",
+            15
+          ]
+        ]
+      }
     },
     {
       "id": "breadboard",
       "label": "Breadboard",
-      "size": { "w": 200, "h": 90 },
-      "defaultPos": { "x": 260, "y": 180 },
+      "size": {
+        "w": 200,
+        "h": 90
+      },
+      "defaultPos": {
+        "x": 470,
+        "y": 500
+      },
       "$comment": "ponytail: two rail pins only. A real pin-grid (rows x columns) is a v2 — nothing in this kit can detect which breadboard hole a jumper is in, so finer granularity would be modelled fiction.",
       "pins": [
-        { "id": "VCC", "label": "+ rail", "kind": "power", "dx": 100, "dy": 20 },
-        { "id": "GND", "label": "- rail", "kind": "ground", "dx": 100, "dy": 70 }
-      ]
+        {
+          "id": "VCC",
+          "label": "+ rail",
+          "kind": "power",
+          "dx": 100,
+          "dy": 20
+        },
+        {
+          "id": "GND",
+          "label": "- rail",
+          "kind": "ground",
+          "dx": 100,
+          "dy": 70
+        }
+      ],
+      "autoPlace": false
     }
   ]
 }

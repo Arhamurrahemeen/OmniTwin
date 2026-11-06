@@ -2,8 +2,25 @@ import test from 'node:test'
 import assert from 'node:assert'
 import {
   REGISTRY, allComponents, componentDef, isKnown,
-  resolveScanEntry, pinDef, whoamiRequests, unidentifiedAddrs, readPlan, decodeRead,
+  resolveScanEntry, pinDef, whoamiRequests, unidentifiedAddrs, readPlan, decodeRead, headerPos, displayFor,
 } from '../src/registry/registry.mjs'
+
+test('every ESP32 GPIO pin sits on its own row of the drawn header', () => {
+  const esp = componentDef('esp32')
+  assert.equal(esp.header.left.length, esp.header.right.length)
+  for (const p of esp.pins.filter(p => p.gpio != null)) {
+    const at = headerPos(esp, p.gpio)
+    assert.deepEqual([p.dx, p.dy], [at.dx, at.dy], p.id)
+  }
+  assert.equal(headerPos(esp, 6), null)   // no drawn pin
+  assert.equal(headerPos(componentDef('mpu6050'), 21), null)   // no header at all
+})
+
+test('displayFor uses authored cards, and a part without one lists its reads', () => {
+  assert.deepEqual(displayFor(componentDef('mpu6050')).map(i => i.key), ['vib'])
+  assert.deepEqual(displayFor({ reads: ['pressure'] }).map(i => i.key), ['pressure'])
+  assert.deepEqual(displayFor(componentDef('esp32')), [])
+})
 
 const BARO = { id: 'baro', readRegs: [{ reg: '0xF7', len: 2, signed: false, scale: 0.5, fields: ['pressure'] }] }
 

@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { parseProject, findingsToLayout } from '../src/code/parser.mjs'
-import { allComponents, componentDef, isKnown } from '../src/registry/registry.mjs'
+import { allComponents, componentDef, headerPos, isKnown } from '../src/registry/registry.mjs'
 
 test('parses ESP-IDF bus pins, hex I2C addresses, and custom DHT22 GPIO', () => {
   const source = `
@@ -33,7 +33,7 @@ static bool dht_decode(const uint8_t data[5]) { return true; }
   assert.ok(layout.components.some(c => c.type === 'esp32'))
   assert.ok(layout.components.some(c => c.type === 'mpu6050'))
   assert.ok(layout.components.some(c => c.type === 'dht22'))
-  assert.ok(layout.components.some(c => c.type === 'breadboard'))
+  assert.ok(!layout.components.some(c => c.type === 'breadboard'), 'nothing can detect a breadboard')
 })
 
 const canvasTypes = (files) =>
@@ -76,6 +76,9 @@ static bool dht_read(void) { return true; }
   assert.equal(esp.pins.find(p => p.id === 'SCL').gpio, 14)
   assert.equal(esp.pins.find(p => p.id === 'DHT').gpio, 17)
   assert.equal(esp.pins.find(p => p.id === 'SDA').label, 'SDA (GPIO13)')
+  // The dot moves with the GPIO, so it sits on the drawn D13 row and not on D21.
+  const { dx, dy } = headerPos(componentDef('esp32'), 13)
+  assert.deepEqual([esp.pins.find(p => p.id === 'SDA').dx, esp.pins.find(p => p.id === 'SDA').dy], [dx, dy])
 
   const byId = new Map(layout.components.map(c => [c.id, c]))
   const connections = layout.wires.map(w => ({

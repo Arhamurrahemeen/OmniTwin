@@ -1,11 +1,11 @@
 // CodeTab.jsx — Project folder intake, file tree, editor, codeFlags
-import { useState, useCallback, useEffect, useMemo } from 'react'
+import { useState, useCallback, useEffect, useImperativeHandle, useMemo } from 'react'
 import { parseProject, findingsToLayout } from './parser'
 import { codeFlags } from './codeFlags'
 
 const EXTENSIONS = ['.c', '.h', '.cpp', '.ino', '.cc', '.cxx']
 
-export default function CodeTab({ onProjectParsed, onLayoutGenerated, registry }) {
+export default function CodeTab({ ref, onProjectParsed, onLayoutGenerated, registry }) {
   const [dirHandle, setDirHandle] = useState(null)
   const [files, setFiles] = useState([])           // [{ name, path, content }]
   const [selectedFile, setSelectedFile] = useState(null)
@@ -24,12 +24,19 @@ export default function CodeTab({ onProjectParsed, onLayoutGenerated, registry }
       const allFiles = await readProjectFiles(handle)
       setFiles(allFiles)
       if (allFiles.length > 0) setSelectedFile(allFiles[0])
+      return true
     } catch (err) {
-      if (err.name !== 'AbortError') setError(err.message)
+      if (err.name === 'AbortError') return false
+      setError(err.message)
+      return true   // leave the drawer open so the error can be read
     } finally {
       setLoading(false)
     }
   }, [])
+
+  // Lets the header's "Open code" go straight to the folder picker: the first
+  // time, the drawer has nothing to show until a folder is chosen anyway.
+  useImperativeHandle(ref, () => ({ pick: pickFolder, hasFolder: () => !!dirHandle }), [pickFolder, dirHandle])
 
   // Recursively read project files
   async function readProjectFiles(handle, prefix = '') {

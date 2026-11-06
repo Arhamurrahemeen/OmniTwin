@@ -28,6 +28,23 @@ export function pinDef(component, pinId) {
 
 const hex = (s) => parseInt(s, 16)
 
+// Where a GPIO physically sits on a board's drawn header, or null if it has no
+// pin there. Keeps a pin dot on the right label when source code moves SDA to 13.
+export function headerPos(def, gpio) {
+  const h = def?.header
+  if (!h) return null
+  const rowOf = (side) => side.findIndex(([, g]) => g === gpio)
+  const left = rowOf(h.left)
+  if (left >= 0) return { dx: h.leftDx, dy: h.firstDy + left * h.rowGap }
+  const right = rowOf(h.right)
+  return right >= 0 ? { dx: h.rightDx, dy: h.firstDy + right * h.rowGap } : null
+}
+
+// What a part's card shows: its authored display list, else every registered read.
+export function displayFor(def) {
+  return def?.display ?? (def?.reads ?? []).map(key => ({ key, label: key, decimals: 3 }))
+}
+
 const byWhoami = (addr, whoami) =>
   REGISTRY.i2c.find(e => e.candidateAddrs.includes(addr) && hex(e.whoamiVal) === whoami) ?? null
 

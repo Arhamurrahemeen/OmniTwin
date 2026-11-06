@@ -1,5 +1,6 @@
 // parser.mjs — C/Arduino source parser for hardware declarations
 // Pure, no DOM, testable under `node --test`
+import { headerPos } from '../registry/registry.mjs'
 
 // Regex patterns for common Arduino/C constructs
 const PATTERNS = {
@@ -315,10 +316,10 @@ export function findingsToLayout(findings, registry) {
   let x = 90, y = 90
   const spacing = 120
   let mcu = null
+  const mcuDef = registry.componentDef('esp32') // default to ESP32 shape
 
   // Always include MCU if we have any pin info
   if (findings.pins.length > 0 || findings.i2c.pins || findings.i2c.addresses.length > 0 || findings.libraries.length > 0) {
-    const mcuDef = registry.componentDef('esp32') // default to ESP32 shape
     if (mcuDef) {
       mcu = {
         id: `mcu-${Date.now()}`,
@@ -385,6 +386,7 @@ export function findingsToLayout(findings, registry) {
       if (pin) {
         pin.gpio = gpio
         pin.label = `${id} (GPIO${gpio})`
+        Object.assign(pin, headerPos(mcuDef, gpio))   // the dot follows the GPIO on the drawn board
       }
     }
     setRolePin('SDA', findings.i2c.pins?.sda)
@@ -408,8 +410,8 @@ export function findingsToLayout(findings, registry) {
         id: `GPIO${declaredPin.pin}`,
         label: `GPIO${declaredPin.pin}`,
         kind: 'signal',
-        dx: 10 + slot * 14,
-        dy: side % 2 === 0 ? 6 : 84,
+        // A GPIO the drawn header lacks (another board's numbering) sits in a spare strip.
+        ...(headerPos(mcuDef, declaredPin.pin) ?? { dx: 60 + slot * 14, dy: side % 2 === 0 ? 150 : 170 }),
         gpio: declaredPin.pin,
       })
       extraIndex += 1
@@ -433,18 +435,6 @@ export function findingsToLayout(findings, registry) {
       connect(mcu, 'SCL', mpu, 'SCL')
     }
     if (dht && Number.isInteger(dht.pin)) connect(mcu, 'DHT', dht, 'DATA')
-  }
-
-  // Breadboard always available for wiring
-  if (components.length > 0 && registry.isKnown('breadboard')) {
-    components.push({
-      id: `breadboard-${Date.now()}`,
-      type: 'breadboard',
-      label: 'Breadboard',
-      x: 260, y: 180,
-      declared: false,
-      confidence: 'none',
-    })
   }
 
   return { components, wires }

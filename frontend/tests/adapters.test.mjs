@@ -111,7 +111,7 @@ test('a failed or unanswered WHOAMI draws no part: the address is not identity',
   const scan = { i2c: [{ addr: 104 }], dht22: { gpio: 4, ok: true } }
   for (const ask of [async () => { throw new Error('nack') }, async () => null]) {
     const types = (await detectComponents(scan, ask)).map(c => c.type)
-    assert.deepEqual(types.sort(), ['breadboard', 'dht22', 'esp32'])
+    assert.deepEqual(types.sort(), ['dht22', 'esp32'])
     assert.match(scanNotice(await identifyScan(scan, ask)), /unidentified I2C at 0x68/)
   }
 })
@@ -176,7 +176,7 @@ test('an empty plan sends nothing', async () => {
 test('detectComponents does not create a component for an unknown address', async () => {
   const scan = { i2c: [{ addr: 72 }], dht22: { gpio: 4, ok: false } }
   const types = (await detectComponents(scan, async () => -1)).map(c => c.type)
-  assert.deepEqual(types.sort(), ['breadboard', 'esp32'])
+  assert.deepEqual(types, ['esp32'])
 })
 
 test('detectComponents asks only for addresses the registry can identify', async () => {
@@ -218,7 +218,7 @@ test('detectComponents composes the 1.0 path: a probe that answers null keeps th
   // would silently break every unreflashed board.
   const scan = { i2c: [{ addr: 104, name: 'mpu6050' }, { addr: 72, name: null }], dht22: { gpio: 4, ok: true } }
   const types = (await detectComponents(scan, async () => null)).map(c => c.type)
-  assert.deepEqual(types.sort(), ['breadboard', 'dht22', 'esp32', 'mpu6050'])
+  assert.deepEqual(types.sort(), ['dht22', 'esp32', 'mpu6050'])
 })
 
 // A port that opens but never speaks: the reader never yields, so every command
@@ -228,6 +228,42 @@ const silentPort = () => ({
   close: async () => {},
   readable: { getReader: () => ({ read: () => new Promise(() => {}), cancel: async () => {} }) },
   writable: { getWriter: () => ({ write: async () => {}, close: async () => {} }) },
+})
+
+test('an IDENT lost to the reset that opening the port causes is retried', async () => {
+  // Seen on a real kit: the board reboots on open and ignores the first IDENT. It
+  // must take the retry through a real SerialSession, whose stale-reply guard
+  // would otherwise swallow every later answer.
+  let writes = 0
+  const inbox = []
+  let wake = null
+  const port = {
+    open: async () => {}, close: async () => {},
+    readable: { getReader: () => ({
+      read: () => new Promise(r => { if (inbox.length) r({ value: inbox.shift(), done: false }); else wake = r }),
+      cancel: async () => {},
+    }) },
+    writable: { getWriter: () => ({
+      close: async () => {},
+      write: async () => {
+        if (++writes < 2) return   // the first command lands during boot
+        const bytes = new TextEncoder().encode('{"id":"TL-1","board":"b","fw":"1.3"}\n')
+        if (wake) { const r = wake; wake = null; r({ value: bytes, done: false }) } else inbox.push(bytes)
+      },
+    }) },
+  }
+  const session = new SerialSession({ port })
+  await session.open()
+  const found = await detectAdapter(session, [{ ...ADAPTER, identTimeoutMs: 15 }])
+  assert.equal(found?.info.id, 'TL-1')
+  assert.equal(writes, 2)
+})
+
+test('a dialect that answers wrongly is not retried; only silence is', async () => {
+  const sent = []
+  const s = fakeSession((cmd) => { sent.push(cmd); return { error: 'unknown command' } })
+  assert.equal(await detectAdapter(s, [{ ...ADAPTER, identTimeoutMs: 15 }]), null)
+  assert.deepEqual(sent, ['IDENT'])
 })
 
 test('a timed-out command does not poison the next one', async () => {

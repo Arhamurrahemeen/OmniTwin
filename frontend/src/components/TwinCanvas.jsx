@@ -1,32 +1,73 @@
-/* 2D digital-twin canvas: breadboard backdrop + draggable component sprites +
-   pin-anchored wires + live-value overlays with anomaly rings.
-   Pure presentational: layout is owned by App via serialModel. */
+/* 2D digital-twin canvas: the board, a card per part with its live readings, and
+   pin-anchored wires. Pure presentational: layout is owned by App via serialModel. */
 import { useState } from 'react'
 import ComponentSprite from './ComponentSprite'
-import { allComponents, componentDef, componentPins, pinDef, pinPos, wiresFor, wireStroke, referenceGhosts, wiringFaults, notReporting } from '../serial/serialModel.mjs'
+import { allComponents, componentDef, componentPins, displayFor, limitNote, notReporting, pinDef, pinPos, referenceGhosts, wireRoute, wiresFor, wireStroke, wiringFaults } from '../serial/serialModel.mjs'
 import ADAPTER from '../serial/adapters/twinlab_esp32_v1'
 
 // Pin dot colour by kind — the same convention the wire stroke uses.
-const PIN_COLOR = { power: 'var(--ot-power)', ground: 'var(--ot-ground)', signal: 'var(--ot-green)' }
+const pinColor = (kind) => wireStroke(kind).stroke
 
-export default function TwinCanvas({ layout, live = {}, sensorFlags = [], onMove, onAdd, onWire, onUnwire, onRemove = () => {}, scanInfo = null }) {
+const RING_R = 34
+const RING_C = 2 * Math.PI * RING_R
+
+function Ring({ item, value, warn }) {
+  const known = typeof value === 'number'
+  const fill = known ? Math.min(Math.max(value / item.ring.max, 0), 1) : 0
+  const color = warn ? 'var(--ot-warn)' : `var(--ot-ring-${item.key === 'temp' ? 'a' : 'b'})`
+  return (
+    <figure className="ring">
+      <svg viewBox="0 0 84 84" width="84" height="84">
+        <circle cx="42" cy="42" r={RING_R} className="ring-track" />
+        <circle cx="42" cy="42" r={RING_R} className="ring-value" stroke={color}
+          strokeDasharray={`${RING_C * fill} ${RING_C}`} transform="rotate(-90 42 42)"
+          style={{ filter: `drop-shadow(0 0 4px ${color})` }} />
+        <text x="42" y="44" textAnchor="middle" className="ring-number">{known ? value.toFixed(item.decimals) : '--'}</text>
+        <text x="42" y="58" textAnchor="middle" className="ring-unit">{item.unit}</text>
+      </svg>
+      <figcaption>{item.label}</figcaption>
+    </figure>
+  )
+}
+
+function Reading({ item, value, warn }) {
+  return (
+    <div className="reading">
+      <span className="reading-label">{item.label}</span>
+      <span className={`reading-value ${warn ? 'reading-value--warn' : ''}`}>
+        {typeof value === 'number' ? value.toFixed(item.decimals ?? 3) : '--'}
+        {item.unit && <small>{item.unit}</small>}
+      </span>
+    </div>
+  )
+}
+
+function PartCard({ type, live, badge }) {
+  const def = componentDef(type)
+  const items = displayFor(def)
+  const notes = items.map(i => limitNote(i.key, live[i.key])).filter(Boolean)
+  return (
+    <div className="part-card" style={{ width: def?.size.w, height: def?.size.h }}>
+      <div className="part-title">{def?.label ?? type}</div>
+      <div className="part-body">
+        <ComponentSprite type={type} />
+        {items.map(item => {
+          const warn = limitNote(item.key, live[item.key]) !== null
+          return item.ring
+            ? <Ring key={item.key} item={item} value={live[item.key]} warn={warn} />
+            : <Reading key={item.key} item={item} value={live[item.key]} warn={warn} />
+        })}
+      </div>
+      {(badge || notes[0]) && <div className="part-note">{badge ?? notes[0]}</div>}
+    </div>
+  )
+}
+
+export default function TwinCanvas({ layout, live = {}, onMove, onAdd, onWire, onUnwire, onRemove = () => {}, onRescan, scanning = false, scanInfo = null }) {
   const [dragging, setDragging] = useState(null)
-  const [addType, setAddType] = useState('breadboard')
   const [armed, setArmed] = useState(null)   // { componentId, pinId } awaiting its partner
   const [wireDragStart, setWireDragStart] = useState(null)
   const [wireCursor, setWireCursor] = useState(null)
-  const [showReference, setShowReference] = useState(false)
-
-  // A sensor's values render only on its own sprite, not on every ESP/breadboard
-  // duplicate. Driven by the registry's `reads` field, so adding a sensor stays
-  // a one-file JSON edit.
-  const readsFor = (type) => componentDef(type)?.reads ?? []
-
-  // The firmware streams accel as %.3f, so 1 dp threw away two decimals: a
-  // resting MPU reads ±0.03 g and rendered as a permanent "ax: 0.0", which
-  // looked exactly like a frozen stream. Temperature is the only reading coarse
-  // enough for 1 dp.
-  const DECIMALS = { temp: 1, hum: 1 }
 
   const onPointerDown = (c) => (e) => {
     e.stopPropagation()
@@ -82,27 +123,22 @@ export default function TwinCanvas({ layout, live = {}, sensorFlags = [], onMove
 
   const compById = (id) => layout.components.find(x => x.id === id)
 
-  // A wiring fault belongs to the two parts it connects, so badge only those.
-  // A part that has gone quiet is attributable too — it is the part whose
-  // registered reads are all null — so that one is badged per sprite as well.
-  // Sensor anomalies stay global: a threshold excursion on "temp" is not
-  // attributable to one sprite from the flag string alone.
+  // A wiring fault belongs to the two parts it connects, and a quiet part is the
+  // one whose reads are all null, so each note lands on its own card. A reading
+  // past its limit is shown by that reading's own card (see PartCard).
   const wiringBad = new Set(
     wiringFaults(layout.wires, layout.components).flatMap(f => f.componentIds))
   const quiet = new Set(notReporting(layout.components, live))
-
-  // Most specific first: a wiring fault is a confirmed student error and the
-  // most actionable thing on the sprite; absence is a hardware fact; a
-  // threshold anomaly is often just downstream of one of the other two.
   const badgeFor = (id) =>
-    wiringBad.has(id) ? '⚠ wiring'
-      : quiet.has(id) ? '⚠ not reporting'
-        : sensorFlags.length > 0 ? '⚠ anomaly' : null
+    wiringBad.has(id) ? 'Check this wiring'
+      : quiet.has(id) ? 'Not reporting' : null
+
+  // Dashed = what the firmware expects, never a read of the student's jumpers.
+  const ghosts = referenceGhosts(layout, ADAPTER.referenceWiring)
 
   return (
     <div
       className="twin-canvas"
-      style={{ position: 'relative', height: 520, overflow: 'hidden', border: '1px solid var(--ot-green)', borderRadius: 8, background: 'var(--ot-paper)' }}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerDown={onCanvasDown}
@@ -110,9 +146,10 @@ export default function TwinCanvas({ layout, live = {}, sensorFlags = [], onMove
       {layout.components.map(c => (
         <div
           key={c.id}
+          className="part"
           data-component={c.type}
           onPointerDown={onPointerDown(c)}
-          style={{ position: 'absolute', left: c.x, top: c.y, cursor: 'move', userSelect: 'none' }}
+          style={{ left: c.x, top: c.y }}
         >
           <button
             className="canvas-remove"
@@ -131,128 +168,76 @@ export default function TwinCanvas({ layout, live = {}, sensorFlags = [], onMove
               D
             </span>
           )}
-          <ComponentSprite type={c.type} pins={componentPins(c)} />
-          <div style={{ fontSize: 10, fontFamily: 'JetBrains Mono', color: 'var(--ot-ink)', textAlign: 'center' }}>
-            {componentDef(c.type)?.label ?? c.type}
-          </div>
-          {readsFor(c.type).map(k => live[k] != null && (
-              <div key={k} style={{ fontSize: 9, color: 'var(--ot-green)' }}>
-                {k}: {typeof live[k] === 'number' ? live[k].toFixed(DECIMALS[k] ?? 3) : '--'}
-              </div>
-            ))}
-          {badgeFor(c.id) && (
-            <div style={{ color: 'var(--ot-orange)', fontSize: 9, maxWidth: 160 }}>
-              {badgeFor(c.id)}
-            </div>
-          )}
+          {componentDef(c.type)?.reads || !componentDef(c.type)
+            ? <PartCard type={c.type} live={live} badge={badgeFor(c.id)} />
+            : <ComponentSprite type={c.type} />}
         </div>
       ))}
+
+      <svg className="wires" width="100%" height="100%">
+        {ghosts.map((g, i) => (
+          <path key={i} d={g.d} className="wire wire--expected" stroke={wireStroke(g.kind).stroke} />
+        ))}
+        {layout.wires.map(w => {
+          const fc = compById(w.fromComponentId), tc = compById(w.toComponentId)
+          const fromPin = pinDef(fc, w.fromPinId), toPin = pinDef(tc, w.toPinId)
+          // A wire whose part or pin is gone is skipped, not drawn to (0,0). The
+          // wire itself is still real, so an unknown kind falls back to signal.
+          if (!fc || !tc || !fromPin || !toPin) return null
+          const stroke = wireStroke(fromPin.kind).stroke
+          return <path key={w.id} d={wireRoute(fc, w.fromPinId, tc, w.toPinId)} className="wire"
+            stroke={stroke} style={{ filter: `drop-shadow(0 0 3px ${stroke})` }} />
+        })}
+        {(wireDragStart || armed) && wireCursor && (() => {
+          const start = wireDragStart ?? armed
+          const from = pinPos(compById(start.componentId), start.pinId)
+          const mid = Math.round((from.x + wireCursor.x) / 2)
+          return <path d={`M${from.x} ${from.y} C${mid} ${from.y} ${mid} ${wireCursor.y} ${wireCursor.x} ${wireCursor.y}`}
+            className="wire wire--expected" stroke="var(--ot-signal)" />
+        })()}
+      </svg>
 
       {/* Pin dots. These sit outside the draggable sprite divs so a pin press
           never starts a component drag. */}
       {layout.components.flatMap(c => componentPins(c).map(p => {
         const at = pinPos(c, p.id)
         const isArmed = armed?.componentId === c.id && armed?.pinId === p.id
-        const wired = wiresFor(layout, c.id, p.id).length > 0
-        const size = componentDef(c.type)?.size
-        const labelOnLeft = p.dx > (size?.w ?? 0) / 2
+        const color = pinColor(p.kind)
         return (
           <div
             key={`${c.id}.${p.id}`}
+            className="pin"
             data-pin={`${c.type}.${p.id}`}
             data-component-id={c.id}
             data-pin-id={p.id}
             title={`${p.label} (${p.kind})`}
             onPointerDown={onPinPointerDown(c, p)}
             onClick={onPinClick(c, p)}
-            style={{
-              position: 'absolute', left: at.x - 5, top: at.y - 5, width: 10, height: 10,
-              borderRadius: '50%', cursor: 'crosshair', zIndex: 2,
-              background: PIN_COLOR[p.kind] ?? 'var(--ot-green)',
-              boxShadow: isArmed ? '0 0 0 3px var(--ot-orange)' : (wired ? '0 0 0 2px var(--ot-paper)' : 'none'),
-              outline: '1px solid var(--ot-ink)',
-            }}
+            style={{ left: at.x - 6, top: at.y - 6, background: color,
+              boxShadow: isArmed ? '0 0 0 3px var(--ot-warn)' : `0 0 7px ${color}` }}
           >
-            <span
-              className="canvas-pin-label"
-              style={{ left: labelOnLeft ? -5 : 9, transform: labelOnLeft ? 'translateX(-100%)' : undefined }}
-            >
-              {p.label}
-            </span>
+            {/* The board's header already prints its own labels. */}
+            {!componentDef(c.type)?.header && <span className="canvas-pin-label">{p.label}</span>}
           </div>
         )
       }))}
 
-      {showReference && referenceGhosts(layout, ADAPTER.referenceWiring).map((g, i) => (
-        <svg key={`ghost${i}`} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} width="100%" height="100%">
-          <line
-            x1={g.from.x} y1={g.from.y} x2={g.to.x} y2={g.to.y}
-            stroke="var(--ot-ink)" strokeWidth="1" strokeDasharray="2 4" opacity="0.5"
-          />
-        </svg>
-      ))}
-
-      {layout.wires.map(w => {
-        const fc = compById(w.fromComponentId), tc = compById(w.toComponentId)
-        const fromPin = pinDef(fc, w.fromPinId), toPin = pinDef(tc, w.toPinId)
-        // A wire whose part or pin is gone is skipped, not drawn to (0,0). The
-        // wire itself is still real, so an unknown kind falls back to signal.
-        if (!fc || !tc || !fromPin || !toPin) return null
-        const from = pinPos(fc, w.fromPinId)
-        const to = pinPos(tc, w.toPinId)
-        const s = wireStroke(fromPin.kind)
-        const bendX = Math.round((from.x + to.x) / 2)
-        return (
-          <svg key={w.id} style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} width="100%" height="100%">
-            <polyline
-              points={`${from.x},${from.y} ${bendX},${from.y} ${bendX},${to.y} ${to.x},${to.y}`}
-              fill="none" stroke={s.stroke} strokeWidth="3"
-              strokeDasharray={s.dash ?? undefined} strokeLinejoin="round" strokeLinecap="round"
-            />
-          </svg>
-        )
-      })}
-
-      {(wireDragStart || armed) && wireCursor && (() => {
-        const start = wireDragStart ?? armed
-        const from = pinPos(compById(start.componentId), start.pinId)
-        const bendX = Math.round((from.x + wireCursor.x) / 2)
-        return (
-          <svg style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} width="100%" height="100%">
-            <polyline
-              points={`${from.x},${from.y} ${bendX},${from.y} ${bendX},${wireCursor.y} ${wireCursor.x},${wireCursor.y}`}
-              fill="none" stroke="var(--ot-green)" strokeWidth="3" strokeDasharray="5 4"
-              strokeLinejoin="round" strokeLinecap="round" opacity="0.65"
-            />
-          </svg>
-        )
-      })()}
-
-      <select
-        value={addType}
-        onChange={e => setAddType(e.target.value)}
-        className="btn-secondary"
-        style={{ position: 'absolute', right: 132, top: 12 }}
-        aria-label="Add component type"
-      >
-        {allComponents().map(c => (
-          <option key={c.id} value={c.id}>{c.label}</option>
-        ))}
-      </select>
-      <button onClick={() => setShowReference(v => !v)} className="btn-secondary"
-        title="This board's fixed pin configuration as the firmware defines it — not a read of the physical jumper wires. Nothing in the kit can detect which breadboard hole a wire sits in."
-        style={{ position: 'absolute', right: 152, top: 12 }}>
-        {showReference ? 'Hide' : 'Show'} reference wiring
-      </button>
-      <button onClick={() => onAdd?.(addType)} className="btn-secondary" style={{ position: 'absolute', right: 12, top: 12 }}>
-        + Add component
-      </button>
-      {scanInfo && (
-        <p className="scan-status" style={{ position: 'absolute', left: 12, bottom: 12, fontSize: 11 }}>{scanInfo}</p>
-      )}
-      {layout.components.length === 0 && (
-        <p className="empty-state" style={{ marginTop: 40 }}>Auto-detected components will appear here. Add them manually if the scan missed any.</p>
-      )}
+      <div className="canvas-foot" onPointerDown={(e) => e.stopPropagation()}>
+        <span className="canvas-info">
+          {scanInfo}
+          {ghosts.length > 0 && <em> Dashed wires are what the firmware expects, not a read of your jumpers.</em>}
+        </span>
+        <button className="btn-quiet" onClick={onRescan} disabled={scanning}
+          title="Re-run the I2C bus sweep to pick up a sensor you just clipped on">
+          {scanning ? 'Scanning…' : 'Rescan'}
+        </button>
+        {/* One gesture: choosing a part adds it. */}
+        <select className="btn-quiet" value="" aria-label="Add a part"
+          onChange={(e) => { if (e.target.value) onAdd?.(e.target.value) }}>
+          <option value="">+ Add part</option>
+          {allComponents().map(c => <option key={c.id} value={c.id}>{c.label}</option>)}
+        </select>
+      </div>
     </div>
   )
 }

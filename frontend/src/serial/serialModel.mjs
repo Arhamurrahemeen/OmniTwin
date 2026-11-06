@@ -2,17 +2,17 @@
 // Component identity, geometry, and pins come from the data-driven registry
 // (src/registry/components.json), not from tables in this file.
 
-import { REGISTRY, allComponents, componentDef, componentPins, decodeRead, isKnown, pinDef, readPlan, resolveScanEntry, unidentifiedAddrs, whoamiRequests } from '../registry/registry.mjs'
+import { REGISTRY, allComponents, componentDef, componentPins, decodeRead, displayFor, isKnown, pinDef, readPlan, resolveScanEntry, unidentifiedAddrs, whoamiRequests } from '../registry/registry.mjs'
 
 // Re-exported so UI modules have one import site for registry data.
-export { allComponents, componentDef, componentPins, isKnown, pinDef, readPlan, whoamiRequests }
+export { allComponents, componentDef, componentPins, displayFor, isKnown, pinDef, readPlan, whoamiRequests }
 
 // Ranges key on the WIRE key the adapter emits — `hum`, not `humidity`. The old
 // `humidity` key never matched a reading, so the 20-90% check was dead code
 // shaped like a working feature.
 const SENSOR_RANGES = { temp: { max: 40 }, hum: { min: 20, max: 90 }, vib: { max: 0.2 } }
 // Display labels for anomaly messages (readings keys are short wire names).
-const LABELS = { temp: 'temperature', hum: 'humidity' }
+const LABELS = { temp: 'temperature', hum: 'humidity', vib: 'vibration' }
 
 let _seq = 0
 const nid = () => `c${++_seq}${Date.now().toString(36)}`
@@ -48,8 +48,9 @@ export function parseScan(line) {
 }
 
 export function scanToComponents(scan) {
-  // The board answered IDENT, so the `always` parts (board + breadboard) are present.
-  const comps = REGISTRY.always.map(c => ({ type: c.id }))
+  // The board answered IDENT, so it is present. The breadboard is autoPlace:false:
+  // nothing can detect one, so it is added by hand rather than cluttering every rig.
+  const comps = REGISTRY.always.filter(c => c.autoPlace !== false).map(c => ({ type: c.id }))
   for (const entry of scan.i2c ?? []) {
     const def = resolveScanEntry(entry)
     if (def) comps.push({ type: def.id })
@@ -213,10 +214,38 @@ export function wiresFor(layout, componentId, pinId) {
 const STROKES = {
   power:  { stroke: 'var(--ot-power)', dash: null },
   ground: { stroke: 'var(--ot-ground)', dash: null },
-  signal: { stroke: 'var(--ot-green)', dash: '6 4' },
+  signal: { stroke: 'var(--ot-signal)', dash: null },
 }
 export function wireStroke(kind) {
   return STROKES[kind] ?? STROKES.signal
+}
+
+// SVG path for a wire between two pins. A board pin on the far side from its
+// target leaves outward and runs above the board instead of cutting across it.
+export function wireRoute(fromComp, fromPinId, toComp, toPinId) {
+  const a = pinPos(fromComp, fromPinId), b = pinPos(toComp, toPinId)
+  const overBoard = (comp, pinId, other) => {
+    const def = componentDef(comp.type)
+    return def?.header && pinDef(comp, pinId).dx < def.size.w / 2 && other.x > comp.x + def.size.w
+  }
+  const loop = (from, to, comp) => {
+    const clearY = Math.max(comp.y - 22, 8)
+    return `M${from.x} ${from.y} C${from.x - 44} ${from.y} ${from.x - 44} ${clearY} ${from.x + 40} ${clearY} ` +
+      `L${to.x - 60} ${clearY} C${to.x - 24} ${clearY} ${to.x - 40} ${to.y} ${to.x} ${to.y}`
+  }
+  if (overBoard(fromComp, fromPinId, b)) return loop(a, b, fromComp)
+  if (overBoard(toComp, toPinId, a)) return loop(b, a, toComp)
+  const mid = Math.round((a.x + b.x) / 2)
+  return `M${a.x} ${a.y} C${mid} ${a.y} ${mid} ${b.y} ${b.x} ${b.y}`
+}
+
+// A reading's limit message for its part card, or null when in range or unknown.
+export function limitNote(key, value) {
+  const range = SENSOR_RANGES[key]
+  if (!range || typeof value !== 'number') return null
+  if (value > range.max) return `above the ${range.max} limit`
+  if (range.min != null && value < range.min) return `below the ${range.min} limit`
+  return null
 }
 
 // Cheap local wiring check — zero LLM cost, same spirit as anomalyFlags().
@@ -251,32 +280,43 @@ export function wiringFlags(wires, components) {
   return wiringFaults(wires, components).map(f => f.message)
 }
 
-// The adapter's authored reference wiring, resolved to screen points for the
-// ghost overlay. The pairs name component TYPES (there is one of each in a kit)
+// The adapter's authored reference wiring, resolved for the dashed "expected
+// wiring" overlay. The pairs name component TYPES (there is one of each in a kit)
 // while the layout holds instances, so resolve by type. Ends whose part is not
-// on the canvas are dropped.
+// on the canvas are dropped, and a pair the rig already has a real wire for is
+// skipped so the two never stack.
 export function referenceGhosts(layout, referenceWiring) {
   const byType = new Map(layout.components.map(c => [c.type, c]))
   const ghosts = []
   for (const w of referenceWiring ?? []) {
     const [ft, fp] = w.from, [tt, tp] = w.to
     const f = byType.get(ft), t = byType.get(tt)
-    if (!f || !t || !pinDef(f.type, fp) || !pinDef(t.type, tp)) continue
-    ghosts.push({ from: pinPos(f, fp), to: pinPos(t, tp) })
+    if (!f || !t || !pinDef(f, fp) || !pinDef(t, tp)) continue
+    if (wiresFor(layout, f.id, fp).some(x => x.fromComponentId === t.id || x.toComponentId === t.id)) continue
+    ghosts.push({ from: pinPos(f, fp), to: pinPos(t, tp), kind: pinDef(f, fp).kind, d: wireRoute(f, fp, t, tp) })
   }
   return ghosts
 }
 
 // Try each board adapter's IDENT dialect in turn and take the first that
 // answers. A losing adapter never receives a SCAN or STREAM — only IDENT.
+//
+// Silence is retried because opening the port can reset the board, and an IDENT
+// sent during boot is simply lost: without this, a correctly flashed kit reports
+// "no firmware". A late reply to an earlier IDENT still answers this one, so the
+// stale-reply guard is lifted between attempts of the same command.
 export async function detectAdapter(session, adapters) {
   for (const adapter of adapters) {
-    try {
-      const reply = await session.command(adapter.identCommand, adapter.identTimeoutMs ?? 2000)
-      const r = adapter.parseIdent(reply)
-      if (r.ok) return { adapter, info: r.info }
-    } catch {
-      // Wrong dialect, or nothing on this port — try the next adapter.
+    for (let attempt = 0; attempt < (adapter.identAttempts ?? 1); attempt++) {
+      try {
+        const reply = await session.command(adapter.identCommand, adapter.identTimeoutMs ?? 2000)
+        const r = adapter.parseIdent(reply)
+        if (r.ok) return { adapter, info: r.info }
+        break   // it answered, in some other dialect
+      } catch {
+        // Still booting, wrong dialect, or nothing on this port.
+        if (attempt + 1 < (adapter.identAttempts ?? 1)) session.forgetStale?.()
+      }
     }
   }
   return null
