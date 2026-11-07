@@ -62,7 +62,7 @@ function PartCard({ type, live, badge }) {
   )
 }
 
-export default function TwinCanvas({ layout, live = {}, onMove, onAdd, onWire, onUnwire, onRemove = () => {}, onRescan, scanning = false, scanInfo = null }) {
+export default function TwinCanvas({ layout, live = {}, onMove, onAdd, onWire, onUnwire, onRemove = () => {}, onRescan = null, scanning = false, scanInfo = null }) {
   const [dragging, setDragging] = useState(null)
   const [armed, setArmed] = useState(null)   // { componentId, pinId } awaiting its partner
   const [wireDragStart, setWireDragStart] = useState(null)
@@ -75,7 +75,10 @@ export default function TwinCanvas({ layout, live = {}, onMove, onAdd, onWire, o
   const onPointerMove = (e) => {
     if (armed || wireDragStart) {
       const rect = e.currentTarget.getBoundingClientRect()
-      setWireCursor({ x: e.clientX - rect.left, y: e.clientY - rect.top })
+      setWireCursor({
+        x: e.clientX - rect.left + e.currentTarget.scrollLeft,
+        y: e.clientY - rect.top + e.currentTarget.scrollTop,
+      })
     }
     if (dragging) onMove?.(dragging.id, e.clientX - dragging.dx, e.clientY - dragging.dy)
   }
@@ -132,8 +135,9 @@ export default function TwinCanvas({ layout, live = {}, onMove, onAdd, onWire, o
     wiringBad.has(id) ? 'Check this wiring'
       : quiet.has(id) ? 'Not reporting' : null
 
-  // Dashed = what the firmware expects, never a read of the student's jumpers.
-  const ghosts = referenceGhosts(layout, ADAPTER.referenceWiring)
+  // Dashed = expected, never a read of the student's jumpers. Only a board that
+  // answered has firmware whose wiring can be expected at all.
+  const ghosts = onRescan ? referenceGhosts(layout, ADAPTER.referenceWiring) : []
 
   return (
     <div
@@ -184,8 +188,10 @@ export default function TwinCanvas({ layout, live = {}, onMove, onAdd, onWire, o
           // wire itself is still real, so an unknown kind falls back to signal.
           if (!fc || !tc || !fromPin || !toPin) return null
           const stroke = wireStroke(fromPin.kind).stroke
-          return <path key={w.id} d={wireRoute(fc, w.fromPinId, tc, w.toPinId)} className="wire"
-            stroke={stroke} style={{ filter: `drop-shadow(0 0 3px ${stroke})` }} />
+          // A wire derived from source is the code's claim, so it reads as expected too.
+          return <path key={w.id} d={wireRoute(fc, w.fromPinId, tc, w.toPinId)}
+            className={w.declared ? 'wire wire--expected' : 'wire'} stroke={stroke}
+            style={w.declared ? undefined : { filter: `drop-shadow(0 0 3px ${stroke})` }} />
         })}
         {(wireDragStart || armed) && wireCursor && (() => {
           const start = wireDragStart ?? armed
@@ -224,12 +230,14 @@ export default function TwinCanvas({ layout, live = {}, onMove, onAdd, onWire, o
       <div className="canvas-foot" onPointerDown={(e) => e.stopPropagation()}>
         <span className="canvas-info">
           {scanInfo}
-          {ghosts.length > 0 && <em> Dashed wires are what the firmware expects, not a read of your jumpers.</em>}
+          {(ghosts.length > 0 || layout.wires.some(w => w.declared)) && <em> Dashed wires are expected wiring, not a read of your jumpers.</em>}
         </span>
-        <button className="btn-quiet" onClick={onRescan} disabled={scanning}
-          title="Re-run the I2C bus sweep to pick up a sensor you just clipped on">
-          {scanning ? 'Scanning…' : 'Rescan'}
-        </button>
+        {onRescan && (
+          <button className="btn-quiet" onClick={onRescan} disabled={scanning}
+            title="Re-run the I2C bus sweep to pick up a sensor you just clipped on">
+            {scanning ? 'Scanning…' : 'Rescan'}
+          </button>
+        )}
         {/* One gesture: choosing a part adds it. */}
         <select className="btn-quiet" value="" aria-label="Add a part"
           onChange={(e) => { if (e.target.value) onAdd?.(e.target.value) }}>

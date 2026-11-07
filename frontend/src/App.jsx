@@ -191,7 +191,7 @@ export default function App() {
         await closeSession()
         setStatus('manual')
         setNoFirmware(true)
-        setScanInfo('No OmniTwin firmware answered on this port — build the rig by hand.')
+        setScanInfo(null)
         // Do NOT wipe a rig the student already placed by hand.
         setLayout(prev => (prev.components.length ? prev : defaultLayout([])))
         return
@@ -294,7 +294,7 @@ export default function App() {
                 onWire={(fc, fp, tc, tp) => setLayout(l => addWire(l, fc, fp, tc, tp))}
                 onUnwire={(wid) => setLayout(l => removeWire(l, wid))}
                 onRemove={(id) => setLayout(l => removeComponent(l, id))}
-                onRescan={rescan} scanning={status === 'scanning'} scanInfo={scanInfo} />
+                onRescan={status === 'manual' ? null : rescan} scanning={status === 'scanning'} scanInfo={scanInfo} />
             </>
           )}
         </main>

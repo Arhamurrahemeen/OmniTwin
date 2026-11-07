@@ -191,7 +191,7 @@ export default function CodeTab({ ref, onProjectParsed, onLayoutGenerated, regis
                 <code>{selectedFile.content}</code>
               </pre>
               {flags.filter(f => f.file === selectedFile.name).length > 0 && (
-                <details className="code-file-flags" open>
+                <details className="code-file-flags">
                   <summary>Flags in this file ({flags.filter(f => f.file === selectedFile.name).length})</summary>
                   <ul>
                     {flags.filter(f => f.file === selectedFile.name).map((f, i) => (
