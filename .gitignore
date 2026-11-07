@@ -41,10 +41,10 @@ docs/PPTx/screenshots/mcp-verify-*.png
 .superpowers/
 .opencode/
 opencode.json
-scripts/
-assets/
-docs/PPTx/
-docs/tasks/
+/scripts/
+/assets/
+/docs/PPTx/
+/docs/tasks/
 docs/Brand.md
 docs/Cost-Structure.md
 docs/GTM-Revenue.md
